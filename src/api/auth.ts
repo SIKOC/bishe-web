@@ -1,12 +1,29 @@
-// 模拟认证 API
-export function loginApi(username: string, password: string) {
-  // 这里模拟网络请求，返回一个 token 和用户信息
-  return Promise.resolve({
-    token: 'mock-token-123456',
-    user: { name: username || '管理员', avatar: '' },
-  })
+import request from '@/utils/request'
+
+export function loginApi(payload: any) {
+  return request.post('/user/auth/login', payload)
+}
+
+export function sendSmsCode(phone: string) {
+  return request.post('/user/auth/sms-code', { phone })
+}
+
+export function registerApi(payload: any) {
+  return request.post('/user/auth/register', payload)
+}
+
+export function getCaptcha() {
+  return request.get('/user/auth/captch')
+}
+
+export function verify2FA(payload: { code: string; challengeId: string }) {
+  return request.post('/auth/2fa/verify', payload)
+}
+
+export function refreshApi() {
+  return request.post('/auth/refresh', {})
 }
 
 export function logoutApi() {
-  return Promise.resolve({})
+  return request.post('/auth/logout', {})
 }

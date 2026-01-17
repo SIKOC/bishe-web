@@ -2,28 +2,35 @@
 import { onMounted, ref } from 'vue'
 import StatsCard from '../components/StatsCard.vue'
 import MapContainer from '../components/MapContainer.vue'
-import { getStats, get24HourTasks, getTodoList } from '../api/dashboard'
+import { fetchDashboardStats, fetchConcurrent24h } from '@/api/dashboard'
 import * as echarts from 'echarts'
 
 const stats = ref({ todayTasks: 0, onlineDrones: 0, totalMileage: 0, alerts: 0 })
 const chartRef = ref<HTMLDivElement | null>(null)
 const loading = ref(true)
-const todos = ref<Array<{ id: string; text: string; done: boolean }>>([])
+const todos = ref<Array<{ id: string; text: string; done: boolean }>>([
+  { id: '1', text: '检查#03无人机电池', done: false },
+  { id: '2', text: '审核新任务申请', done: false },
+])
 
 onMounted(async () => {
   loading.value = true
-  stats.value = await getStats()
-  const res = await get24HourTasks()
-  const t = await getTodoList()
-  todos.value = t
+  const s = await fetchDashboardStats()
+  stats.value = { 
+    todayTasks: s.waybills, 
+    onlineDrones: s.online, 
+    totalMileage: s.mileage, 
+    alerts: s.alerts 
+  }
+  const res = await fetchConcurrent24h()
 
   if (chartRef.value) {
     const myChart = echarts.init(chartRef.value)
     myChart.setOption({
       tooltip: { trigger: 'axis' },
-      xAxis: { type: 'category', data: res.hours },
+      xAxis: { type: 'category', data: res.x },
       yAxis: { type: 'value' },
-      series: [{ data: res.data, type: 'line', smooth: true, areaStyle: {} }],
+      series: [{ data: res.y, type: 'line', smooth: true, areaStyle: {} }],
     })
   }
   loading.value = false

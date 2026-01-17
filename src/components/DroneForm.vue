@@ -31,7 +31,7 @@ function submit() {
 </script>
 
 <template>
-  <el-dialog v-model:visible="props.modelValue" title="无人机">
+  <el-dialog :model-value="props.modelValue" title="无人机" @close="close">
     <el-form label-width="100px">
       <el-form-item label="编号">
         <el-input v-model="form.id" :disabled="!!form.id" />

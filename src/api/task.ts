@@ -1,41 +1,62 @@
-export function fetchTaskList(params?: any): Promise<any[]> {
-  return new Promise((resolve) => {
-    setTimeout(() => {
-      const data = Array.from({ length: 15 }, (_, i) => ({
-        id: i + 1,
-        name: `任务-${i + 1}`,
-        status: ['待调度', '飞行中', '已完成', '异常'][i % 4],
-        priority: ['低', '中', '高'][i % 3],
-        time: `2025-12-10 ${String(8 + (i % 10)).padStart(2, '0')}:00`,
-        origin: '市立医院',
-        target: '中心医院',
-      }))
-      resolve(data)
-    }, 1000)
-  })
+import request from '@/utils/request'
+
+export async function fetchTaskList(params?: any): Promise<any[]> {
+  const res: any = await request.get('/task/tasks', { params })
+  return (res?.data?.list || res?.list || []).map((t: any) => ({
+    id: t.task_id,
+    name: `任务-${t.task_id}`,
+    status: (
+      {
+        pending: '待调度',
+        in_progress: '飞行中',
+        completed: '已完成',
+        canceled: '已取消',
+        pending_review: '待审核'
+      } as Record<string, string>
+    )[t.status] || t.status,
+    priority: ['低', '中', '高'][Math.min(Math.max((t.priority || 3) - 1, 0), 2)],
+    time: t.request_time,
+    origin: t.origin_hospital_id,
+    target: t.destination_hospital_id,
+    auditStatus: t.audit_status
+  }))
 }
 
-export function computeFlight(payload: any): Promise<{ drone: string; eta: string }> {
-  return new Promise((resolve) => {
-    setTimeout(() => {
-      resolve({ drone: '无人机 #03', eta: '18 分钟' })
-    }, 1200)
-  })
+export async function fetchTaskDetail(id: string | number): Promise<any> {
+  const t: any = await request.get(`/task/tasks/${id}`)
+  return t
 }
 
-export function fetchTaskDetail(id: string | number): Promise<any> {
-  return new Promise((resolve) => {
-    setTimeout(() => {
-      resolve({
-        id,
-        progress: 60,
-        waybill: { code: 'WB20251210001', weight: '3.2kg' },
-        logs: [
-          { time: '10:00', text: '任务创建' },
-          { time: '10:05', text: '起飞' },
-          { time: '10:20', text: '途中巡航' },
-        ],
-      })
-    }, 800)
-  })
+export async function createTask(payload: any): Promise<any> {
+  // Pass through all fields including coordinates
+  return request.post('/task/tasks', payload)
+}
+
+export async function auditTask(id: number, auditStatus: string, originHospitalId?: number): Promise<any> {
+  return request.put(`/task/tasks/${id}/audit`, { auditStatus, originHospitalId })
+}
+
+export async function assignTask(id: number, droneId: number): Promise<any> {
+  return request.put(`/task/tasks/${id}/assign`, null, { params: { droneId } })
+}
+
+export async function updateTaskStatus(id: number, status: string): Promise<any> {
+  return request.put(`/task/tasks/${id}/status`, null, { params: { status } })
+}
+
+/**
+ * 获取任务实时轨迹
+ */
+export async function getTaskTrack(taskId: number): Promise<{
+  route: Array<{ lng: number; lat: number; timestamp: number }>
+  currentPosition: {
+    lng: number
+    lat: number
+    altitude?: number
+    speed?: number
+    heading?: number
+  }
+}> {
+  const res: any = await request.get(`/task/tasks/${taskId}/track`)
+  return res?.data || res
 }

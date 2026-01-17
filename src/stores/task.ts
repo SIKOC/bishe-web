@@ -1,13 +1,13 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import type { Task } from '../api/task'
+import { fetchTaskList } from '@/api/task'
 
 export const useTaskStore = defineStore('task', () => {
-  const list = ref<Task[]>([])
+  const list = ref<any[]>([])
   const total = ref(0)
   const loading = ref(false)
 
-  function setTasks(arr: Task[], t = 0) {
+  function setTasks(arr: any[], t = 0) {
     list.value = arr
     total.value = t
   }
@@ -16,5 +16,15 @@ export const useTaskStore = defineStore('task', () => {
     loading.value = v
   }
 
-  return { list, total, loading, setTasks, setLoading }
+  async function load(params?: any) {
+    loading.value = true
+    try {
+      const res = await fetchTaskList(params)
+      setTasks(res, Array.isArray(res) ? res.length : 0)
+    } finally {
+      loading.value = false
+    }
+  }
+
+  return { list, total, loading, setTasks, setLoading, load }
 })

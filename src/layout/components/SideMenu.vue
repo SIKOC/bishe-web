@@ -50,12 +50,13 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useUserStore } from '@/store/user'
 import { DataAnalysis, Operation, Box, Monitor, PieChart, Setting } from '@element-plus/icons-vue'
 
 const route = useRoute()
-const active = route.path
+const active = computed(() => route.path)
 const user = useUserStore()
 const isAdmin = user.roles.includes('admin')
 </script>

@@ -75,6 +75,6 @@ function handlePageChange(p: number) {
       </div>
     </el-card>
 
-    <DroneForm v-model:visible="showForm" :editData="editData" @submit="handleSubmit" />
+    <DroneForm v-model="showForm" :editData="editData" @submit="handleSubmit" />
   </div>
 </template>

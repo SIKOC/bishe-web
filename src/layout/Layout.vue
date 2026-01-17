@@ -10,7 +10,11 @@
         </el-header>
         <el-main class="main">
           <Breadcrumbs />
-          <router-view />
+          <router-view v-slot="{ Component }">
+            <transition name="fade">
+              <component :is="Component" />
+            </transition>
+          </router-view>
         </el-main>
       </el-container>
     </el-container>
@@ -45,4 +49,6 @@ const globalLoading = ref(false)
 .main {
   padding: 12px;
 }
+.fade-enter-active, .fade-leave-active { transition: opacity .25s ease }
+.fade-enter-from, .fade-leave-to { opacity: 0 }
 </style>

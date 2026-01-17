@@ -12,7 +12,7 @@ const auth = useAuthStore()
 async function doLogin() {
   loading.value = true
   try {
-    await auth.login(username.value, password.value)
+    await auth.login(username.value, password.value, '', '')
     router.push('/')
   } finally {
     loading.value = false

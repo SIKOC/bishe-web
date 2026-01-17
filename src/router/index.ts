@@ -1,5 +1,5 @@
 import { createRouter, createWebHistory, RouteRecordRaw } from 'vue-router'
-import { useUserStore } from '@/store/user'
+import { useAuthStore } from '@/stores/auth'
 
 const routes: RouteRecordRaw[] = [
   {
@@ -29,6 +29,7 @@ const routes: RouteRecordRaw[] = [
           icon: 'Operation',
           requiresAuth: true,
         },
+        redirect: { name: 'TaskList' },
         children: [
           {
             path: 'create',
@@ -54,6 +55,7 @@ const routes: RouteRecordRaw[] = [
         path: 'resources',
         name: 'Resources',
         meta: { title: '资源管理', breadcrumb: ['资源管理'], icon: 'Box', requiresAuth: true },
+        redirect: { name: 'DroneList' },
         children: [
           {
             path: 'drones',
@@ -90,6 +92,7 @@ const routes: RouteRecordRaw[] = [
         path: 'analytics',
         name: 'Analytics',
         meta: { title: '数据报表', breadcrumb: ['数据报表'], icon: 'PieChart', requiresAuth: true },
+        redirect: { name: 'OperationAnalytics' },
         children: [
           {
             path: 'operation',
@@ -140,12 +143,9 @@ const router = createRouter({
 })
 
 router.beforeEach((to, _from, next) => {
-  const user = useUserStore()
+  const auth = useAuthStore()
   if (to.meta.public) return next()
-  if (to.meta.requiresAuth && !user.token) return next({ name: 'Login' })
-  const needRoles = (to.meta as any)?.roles as string[] | undefined
-  if (needRoles && !needRoles.some((r) => user.roles.includes(r)))
-    return next({ name: 'Dashboard' })
+  if (to.meta.requiresAuth && !auth.accessToken) return next({ name: 'Login' })
   next()
 })
 

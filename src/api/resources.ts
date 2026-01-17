@@ -1,36 +1,27 @@
-export function fetchDroneList(): Promise<any[]> {
-  return new Promise((resolve) => {
-    setTimeout(() => {
-      const list = Array.from({ length: 8 }, (_, i) => ({
-        id: i + 1,
-        name: `DR-${100 + i}`,
-        battery: Math.floor(Math.random() * 60) + 40,
-        signal: Math.floor(Math.random() * 60) + 40,
-        status: ['待命', '执行中', '维护中'][i % 3],
-      }))
-      resolve(list)
-    }, 900)
-  })
+import request from '@/utils/request'
+
+export async function fetchDroneList(): Promise<any[]> {
+  const res: any = await request.get('/drone/drones', { params: { page: 1, size: 50 } })
+  return (res?.data?.list || res?.list || []).map((d: any) => ({
+    id: d.drone_id,
+    name: d.drone_code,
+    battery: d.battery_level,
+    signal: 100,
+    status: d.status,
+  }))
 }
 
-export function fetchMaintenance(): Promise<any[]> {
-  return new Promise((resolve) => {
-    setTimeout(() => {
-      resolve([
-        { id: 1, drone: 'DR-101', type: '更换电池', time: '2025-12-09 11:20' },
-        { id: 2, drone: 'DR-102', type: '维修电机', time: '2025-12-08 16:40' },
-      ])
-    }, 700)
-  })
+export async function fetchMaintenance(): Promise<any[]> {
+  const res: any = await request.get('/drone/maintenance', { params: { page: 1, size: 50 } })
+  return (res?.data?.list || res?.list || []).map((m: any) => ({
+    id: m.record_id,
+    drone: m.drone_id,
+    type: m.maintenance_type,
+    time: m.maintenance_time,
+  }))
 }
 
-export function fetchLocations(): Promise<any[]> {
-  return new Promise((resolve) => {
-    setTimeout(() => {
-      resolve([
-        { id: 1, name: '市立医院', lat: 31.23, lng: 121.47 },
-        { id: 2, name: '中心医院', lat: 31.2, lng: 121.45 },
-      ])
-    }, 600)
-  })
+export async function fetchLocations(): Promise<any[]> {
+  const res: any = await request.get('/hospital/list')
+  return (res?.data || res || []).map((h: any) => ({ id: h.hospital_id, name: h.name, lat: h.lat, lng: h.lng }))
 }

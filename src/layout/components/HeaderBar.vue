@@ -8,7 +8,7 @@
       <el-dropdown>
         <span class="el-dropdown-link">
           <el-avatar size="small">U</el-avatar>
-          <span style="margin-left: 8px">{{ user.username || '未登录' }}</span>
+          <span style="margin-left: 8px">{{ auth.user?.username || '未登录' }}</span>
           <el-icon><ArrowDown /></el-icon>
         </span>
         <template #dropdown>
@@ -23,13 +23,13 @@
 
 <script setup lang="ts">
 import { ArrowDown, Compass } from '@element-plus/icons-vue'
-import { useUserStore } from '@/store/user'
+import { useAuthStore } from '@/stores/auth'
 import { useRouter } from 'vue-router'
 
-const user = useUserStore()
+const auth = useAuthStore()
 const router = useRouter()
 const logout = () => {
-  user.logout()
+  auth.logout()
   router.push({ name: 'Login' })
 }
 </script>

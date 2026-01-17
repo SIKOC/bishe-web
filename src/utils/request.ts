@@ -1,25 +1,48 @@
 import axios from 'axios'
+import { useAuthStore } from '@/stores/auth'
 
 const service = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE || '/',
-  timeout: 10000,
+  // 默认指向后端网关 HTTPS，如果需要其他环境，可在 .env.local 配置 VITE_API_BASE
+  baseURL: import.meta.env.VITE_API_BASE || 'https://localhost:10010/api',
+  timeout: 15000,
+  withCredentials: true,
 })
 
-// 请求拦截器：可在此加入 token
 service.interceptors.request.use((config) => {
   try {
-    const token = localStorage.getItem('token')
+    const token = localStorage.getItem('access_token')
     if (token && config.headers) config.headers.Authorization = `Bearer ${token}`
-  } catch (e) {
-    // ignore
-  }
+  } catch {}
   return config
 })
 
-// 响应拦截器：可统一处理错误
+let refreshing = false
+let queue: any[] = []
+
 service.interceptors.response.use(
   (res) => res.data,
-  (error) => {
+  async (error) => {
+    const status = error?.response?.status
+    const code = error?.response?.data?.code
+    if (status === 401 && code === 'token_expired') {
+      if (refreshing) {
+        return new Promise((resolve, reject) => queue.push({ resolve, reject, config: error.config }))
+      }
+      refreshing = true
+      try {
+        const store = useAuthStore()
+        await store.refresh()
+        queue.forEach(({ resolve, config }) => resolve(service(config)))
+        queue = []
+        refreshing = false
+        return service(error.config)
+      } catch (e) {
+        queue.forEach(({ reject }) => reject(e))
+        queue = []
+        refreshing = false
+        return Promise.reject(e)
+      }
+    }
     return Promise.reject(error)
   },
 )

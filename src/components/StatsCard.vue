@@ -15,7 +15,7 @@
 <script setup lang="ts">
 import { defineProps } from 'vue'
 
-defineProps<{ title: string; value: string | number; icon: any }>()
+defineProps<{ title: string; value: string | number; icon?: any }>()
 </script>
 
 <style scoped>

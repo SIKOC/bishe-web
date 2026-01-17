@@ -3,10 +3,10 @@ import { ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 
 const menus = [
-  { name: '仪表盘', path: '/dashboard', icon: 'HomeFilled' },
-  { name: '无人机管理', path: '/drones', icon: 'Ticket' },
-  { name: '任务调度', path: '/monitor', icon: 'Map' },
-  { name: '历史报表', path: '/dashboard', icon: 'DataAnalysis' },
+  { name: '仪表盘', path: '/', icon: 'HomeFilled' },
+  { name: '无人机管理', path: '/resources/drones', icon: 'Ticket' },
+  { name: '实时监控', path: '/monitor', icon: 'Map' },
+  { name: '运营分析', path: '/analytics/operation', icon: 'DataAnalysis' },
 ]
 
 const route = useRoute()
