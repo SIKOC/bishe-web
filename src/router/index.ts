@@ -89,6 +89,17 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/CommandMonitor/Index.vue'),
       },
       {
+        path: 'message',
+        name: 'MessageCenter',
+        meta: {
+          title: '消息中心',
+          breadcrumb: ['消息中心'],
+          icon: 'ChatLineRound',
+          requiresAuth: true,
+        },
+        component: () => import('@/views/Message/Chat.vue'),
+      },
+      {
         path: 'analytics',
         name: 'Analytics',
         meta: { title: '数据报表', breadcrumb: ['数据报表'], icon: 'PieChart', requiresAuth: true },

@@ -145,14 +145,14 @@ export function useWebSocket(options: WebSocketOptions) {
    * 订阅任务
    */
   const subscribeTask = (taskId: number): void => {
-    send({ type: 'subscribe', taskId })
+    send({ type: 'subscribe_task', taskId })
   }
 
   /**
    * 取消订阅任务
    */
   const unsubscribeTask = (taskId: number): void => {
-    send({ type: 'unsubscribe', taskId })
+    send({ type: 'unsubscribe_task', taskId })
   }
 
   /**

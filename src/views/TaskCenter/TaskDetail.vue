@@ -9,7 +9,7 @@
     <el-row :gutter="16">
       <!-- 左侧信息 -->
       <el-col :span="8">
-        <el-card shadow="hover">
+        <el-card shadow="hover" class="info-card">
           <template #header>
             <div class="card-header">
               <span>任务信息</span>
@@ -71,7 +71,7 @@
         </el-card>
 
         <!-- 任务进度 -->
-        <el-card shadow="hover" style="margin-top: 16px">
+        <el-card shadow="hover" class="progress-card" style="margin-top: 16px">
           <template #header>任务进度</template>
           <el-progress
             :percentage="progress"
@@ -123,6 +123,11 @@
                 </el-button>
               </div>
             </div>
+            <div class="trip-badges" v-if="currentDrone">
+              <el-tag size="small" effect="dark" type="info">速度 {{ currentDrone.speed?.toFixed?.(1) || '-' }} m/s</el-tag>
+              <el-tag size="small" effect="dark" type="warning">电量 {{ currentDrone.batteryLevel?.toFixed?.(0) || '-' }}%</el-tag>
+              <el-tag size="small" effect="dark" type="success">高度 {{ currentDrone.altitude?.toFixed?.(0) || '-' }} m</el-tag>
+            </div>
           </template>
           
           <div class="map-container">
@@ -130,6 +135,7 @@
               :markers="droneMarkers"
               :route="routePoints"
               :show-toolbar="true"
+              :coord-type="coordType"
               @marker-click="handleMarkerClick"
               ref="mapRef"
             />
@@ -141,6 +147,77 @@
               <div class="legend-item" v-if="trackPoints.length > 0">
                 <div class="legend-line" style="background: #ff4d4f;"></div>
                 <span>实时轨迹</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 行程概览 -->
+          <div class="route-info-card">
+            <div class="replay-header">
+              <span>行程概览</span>
+              <el-tag size="small" type="info">实时</el-tag>
+            </div>
+            <div class="trip-summary">
+              <div class="trip-point">
+                <div class="dot start"></div>
+                <div class="label">起点</div>
+                <div class="value">{{ originText }}</div>
+              </div>
+              <div class="trip-point">
+                <div class="dot end"></div>
+                <div class="label">终点</div>
+                <div class="value">{{ destText }}</div>
+              </div>
+              <div class="trip-metrics">
+                <div class="metric">
+                  <div class="metric-label">ETA</div>
+                  <div class="metric-value">{{ etaText }}</div>
+                </div>
+                <div class="metric">
+                  <div class="metric-label">倒计时</div>
+                  <div class="metric-value">{{ etaCountdownText }}</div>
+                </div>
+                <div class="metric">
+                  <div class="metric-label">剩余距离</div>
+                  <div class="metric-value">{{ remainingDistanceText }}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 轨迹回放 -->
+          <div v-if="trackPoints.length > 0" class="route-info-card">
+            <div class="replay-header">
+              <span>轨迹回放</span>
+              <el-tag size="small" type="info">点数 {{ trackPoints.length }}</el-tag>
+            </div>
+            <div class="replay-controls">
+              <el-button size="small" @click="toggleReplay">
+                <el-icon>
+                  <component :is="replayPlaying ? 'VideoPause' : 'VideoPlay'" />
+                </el-icon>
+                {{ replayPlaying ? '暂停' : '播放' }}
+              </el-button>
+              <el-button-group>
+                <el-button size="small" :type="replaySpeed === 1 ? 'primary' : 'default'" @click="setReplaySpeed(1)">1x</el-button>
+                <el-button size="small" :type="replaySpeed === 2 ? 'primary' : 'default'" @click="setReplaySpeed(2)">2x</el-button>
+                <el-button size="small" :type="replaySpeed === 4 ? 'primary' : 'default'" @click="setReplaySpeed(4)">4x</el-button>
+              </el-button-group>
+              <el-button size="small" @click="resetReplay">重置</el-button>
+            </div>
+            <el-slider v-model="replayIndex" :max="trackPoints.length - 1" :min="0" />
+            <div class="replay-timeline">
+              <div class="timeline-track">
+                <div class="timeline-progress" :style="{ width: `${replayProgress}%` }"></div>
+                <div class="timeline-thumb" :style="{ left: `${replayProgress}%` }"></div>
+              </div>
+              <div class="timeline-ticks">
+                <span v-for="(t, i) in timeTicks" :key="i" class="tick">{{ t }}</span>
+              </div>
+              <div class="timeline-labels">
+                <span>{{ trackStartTime }}</span>
+                <span>{{ trackCurrentTime }}</span>
+                <span>{{ trackEndTime }}</span>
               </div>
             </div>
           </div>
@@ -158,7 +235,7 @@
                 <el-progress
                   :percentage="(routeInfo.riskFactor * 100)"
                   :color="getRiskColor(routeInfo.riskFactor)"
-                  :format="(val) => `${(val / 100).toFixed(2)}`"
+                  :format="formatRisk"
                   :stroke-width="8"
                 />
               </el-descriptions-item>
@@ -221,6 +298,28 @@
               </div>
             </div>
           </div>
+
+          <!-- 告警中心 -->
+          <div class="route-info-card">
+            <div class="replay-header">
+              <span>告警中心</span>
+              <el-tag size="small" type="danger" v-if="alerts.length">告警 {{ alerts.length }}</el-tag>
+              <el-tag size="small" type="success" v-else>正常</el-tag>
+            </div>
+            <el-empty v-if="alerts.length === 0" description="暂无告警" :image-size="60" />
+            <div v-else class="alert-list">
+              <el-alert
+                v-for="(a, i) in alerts"
+                :key="i"
+                :title="a.title"
+                :description="a.detail"
+                :type="a.level"
+                :closable="false"
+                show-icon
+                style="margin-top: 8px"
+              />
+            </div>
+          </div>
         </el-card>
       </el-col>
     </el-row>
@@ -263,11 +362,13 @@ import { fetchTaskDetail, assignTask, updateTaskStatus, getTaskTrack } from '@/a
 import { fetchDrones } from '@/api/drones'
 import { getRouteDetail } from '@/api/route'
 import { useWebSocket } from '@/hooks/useWebSocket'
+import request from '@/utils/request'
 import type { DroneMarker, RoutePoint } from '@/types/drone'
 
 const route = useRoute()
 const router = useRouter()
 const taskId = computed(() => Number(route.params.id))
+const coordType = ref<'gcj02' | 'wgs84' | 'bd09'>('gcj02')
 
 const detail = ref<any>({
   taskId: 0,
@@ -291,11 +392,106 @@ const showAssignDialog = ref(false)
 const availableDrones = ref<any[]>([])
 const assignForm = ref({ droneId: null as number | null })
 const estimatedArrivalTime = ref<Date | null>(null)
+const mapRef = ref<any>(null)
+const alerts = ref<{ title: string; detail: string; level: 'warning' | 'error' | 'info' }[]>([])
+const replayIndex = ref(0)
+const replayPlaying = ref(false)
+const replaySpeed = ref(1)
+let replayTimer: number | null = null
+
+const replayProgress = computed(() => {
+  if (trackPoints.value.length <= 1) return 0
+  return Math.round((replayIndex.value / (trackPoints.value.length - 1)) * 100)
+})
+
+const trackStartTime = computed(() => formatTrackTime(trackPoints.value[0]?.timestamp))
+const trackEndTime = computed(() => formatTrackTime(trackPoints.value[trackPoints.value.length - 1]?.timestamp))
+const trackCurrentTime = computed(() => formatTrackTime(trackPoints.value[replayIndex.value]?.timestamp))
 const routeInfo = ref<{
   distance?: number
   duration?: number
   riskFactor?: number
 } | null>(null)
+const nowTick = ref(Date.now())
+let timer: number | null = null
+
+const originText = computed(() => {
+  return (
+    detail.value.originName ||
+    detail.value.originAddress ||
+    detail.value.origin ||
+    formatCoord(detail.value.origin_lng, detail.value.origin_lat)
+  )
+})
+const destText = computed(() => {
+  return (
+    detail.value.destName ||
+    detail.value.destAddress ||
+    detail.value.destination ||
+    formatCoord(detail.value.dest_lng, detail.value.dest_lat)
+  )
+})
+
+const remainingDistanceKm = computed(() => {
+  if (!currentDrone.value || routePoints.value.length < 2) return 0
+  const idx = findClosestRouteIndex(currentDrone.value, routePoints.value)
+  if (idx >= routePoints.value.length - 1) return 0
+  let sum = 0
+  for (let i = idx; i < routePoints.value.length - 1; i++) {
+    sum += haversineMeters(routePoints.value[i], routePoints.value[i + 1])
+  }
+  return sum / 1000
+})
+const remainingDistanceText = computed(() => {
+  if (!routePoints.value.length) return '-'
+  return `${remainingDistanceKm.value.toFixed(2)} km`
+})
+
+const etaText = computed(() => {
+  if (estimatedArrivalTime.value) return formatDateTime(estimatedArrivalTime.value)
+  if (!currentDrone.value) return '-'
+  const speed = currentDrone.value.speed
+  if (speed && remainingDistanceKm.value > 0) {
+    const seconds = (remainingDistanceKm.value * 1000) / speed
+    const eta = new Date(Date.now() + seconds * 1000)
+    return formatDateTime(eta)
+  }
+  return detail.value.expectedArrivalTime ? formatDateTime(detail.value.expectedArrivalTime) : '-'
+})
+
+const etaTimestamp = computed(() => {
+  if (estimatedArrivalTime.value) return estimatedArrivalTime.value.getTime()
+  if (currentDrone.value?.speed && remainingDistanceKm.value > 0) {
+    return Date.now() + (remainingDistanceKm.value * 1000) / currentDrone.value.speed * 1000
+  }
+  if (detail.value.expectedArrivalTime) {
+    const ts = new Date(detail.value.expectedArrivalTime).getTime()
+    return Number.isNaN(ts) ? null : ts
+  }
+  return null
+})
+
+const etaCountdownText = computed(() => {
+  if (!etaTimestamp.value) return '-'
+  const diff = etaTimestamp.value - nowTick.value
+  if (diff <= 0) return '已到达'
+  const totalSeconds = Math.floor(diff / 1000)
+  const h = Math.floor(totalSeconds / 3600)
+  const m = Math.floor((totalSeconds % 3600) / 60)
+  const s = totalSeconds % 60
+  if (h > 0) return `${h}h ${m}m`
+  return `${m}m ${s}s`
+})
+
+const timeTicks = computed(() => {
+  const list: string[] = []
+  const n = trackPoints.value.length
+  if (n === 0) return list
+  const indices = [0, Math.floor((n - 1) * 0.25), Math.floor((n - 1) * 0.5), Math.floor((n - 1) * 0.75), n - 1]
+  const unique = Array.from(new Set(indices))
+  unique.forEach(i => list.push(formatTrackTime(trackPoints.value[i]?.timestamp)))
+  return list
+})
 
 // 计算进度
 const progress = computed(() => {
@@ -317,8 +513,8 @@ const isAdmin = computed(() => {
 
 // WebSocket连接
 const wsUrl = computed(() => {
-  const baseUrl = import.meta.env.VITE_WS_BASE || window.location.origin.replace('http', 'ws')
-  return `${baseUrl}/api/ws/task/${taskId.value}`
+  const baseUrl = import.meta.env.VITE_NETTY_WS_BASE || 'ws://localhost:18080'
+  return `${baseUrl}/ws`
 })
 
 const ws = useWebSocket({
@@ -336,22 +532,43 @@ const ws = useWebSocket({
 
 // 重写消息处理
 ws.handleMessage = (message: any) => {
-  if (message.type === 'task_drone_position') {
-    const data = message.data
-    currentDrone.value = {
-      id: data.droneId,
-      lat: data.latitude,
-      lng: data.longitude,
+  if (message.type === 'alert') {
+    const alert = message.data || {}
+    alerts.value.unshift({
+      title: alert.title || '任务告警',
+      detail: alert.detail || alert.message || '出现异常，请关注',
+      level: alert.level || 'warning'
+    })
+    return
+  }
+
+  if (message.type === 'task_status') {
+    detail.value.status = message.data.status
+    ElMessage.info(message.data.message || '任务状态已更新')
+    return
+  }
+
+  if (message.type === 'task_drone_position' || message.type === 'drone_position') {
+    const data = message.data || message
+    if (data.taskId && data.taskId !== taskId.value) return
+
+    const position: DroneMarker = {
+      id: data.droneId || detail.value.assignedDroneId || 0,
+      lat: data.latitude ?? data.lat,
+      lng: data.longitude ?? data.lng,
       altitude: data.altitude,
-      label: data.droneCode,
+      label: data.droneCode || detail.value.droneCode || `DRONE-${data.droneId || detail.value.assignedDroneId}`,
       status: 'flying',
       batteryLevel: data.batteryLevel,
       speed: data.speed,
       heading: data.heading,
       taskId: taskId.value
     }
-    droneMarkers.value = currentDrone.value ? [currentDrone.value] : []
-    
+    if (!replayPlaying.value) {
+      currentDrone.value = position
+      droneMarkers.value = [position]
+    }
+
     if (data.route) {
       routePoints.value = data.route.map((p: any) => ({
         lng: p.lng,
@@ -359,13 +576,24 @@ ws.handleMessage = (message: any) => {
         altitude: p.altitude
       }))
     }
-    
+
+    if (position.lat && position.lng) {
+      trackPoints.value.push({
+        lng: position.lng,
+        lat: position.lat,
+        altitude: position.altitude,
+        timestamp: Date.now()
+      })
+      if (trackPoints.value.length > 2000) {
+        trackPoints.value.shift()
+      }
+      mapRef.value?.updateTrack?.(trackPoints.value)
+      checkAlerts(position)
+    }
+
     if (data.estimatedArrivalTime) {
       estimatedArrivalTime.value = new Date(data.estimatedArrivalTime)
     }
-  } else if (message.type === 'task_status') {
-    detail.value.status = message.data.status
-    ElMessage.info(message.data.message || '任务状态已更新')
   }
 }
 
@@ -439,8 +667,10 @@ const loadTaskTrack = async (): Promise<void> => {
           status: 'flying',
           speed: result.currentPosition.speed,
           heading: result.currentPosition.heading
-        }
+        } as DroneMarker
         droneMarkers.value = currentDrone.value ? [currentDrone.value] : []
+        mapRef.value?.updateTrack?.(trackPoints.value)
+        checkAlerts(currentDrone.value)
       }
     }
   } catch (error) {
@@ -529,6 +759,82 @@ const handleMarkerClick = (marker: DroneMarker): void => {
 }
 
 /**
+ * 轨迹回放控制
+ */
+const toggleReplay = (): void => {
+  if (replayPlaying.value) {
+    stopReplay()
+  } else {
+    startReplay()
+  }
+}
+
+const setReplaySpeed = (speed: number): void => {
+  replaySpeed.value = speed
+  if (replayPlaying.value) {
+    stopReplay()
+    startReplay()
+  }
+}
+
+const startReplay = (): void => {
+  if (trackPoints.value.length === 0) return
+  replayPlaying.value = true
+  if (replayTimer) window.clearInterval(replayTimer)
+  replayTimer = window.setInterval(() => {
+    if (replayIndex.value >= trackPoints.value.length - 1) {
+      stopReplay()
+      return
+    }
+    replayIndex.value += 1
+    applyReplayPoint()
+  }, 1000 / replaySpeed.value)
+}
+
+const stopReplay = (): void => {
+  replayPlaying.value = false
+  if (replayTimer) {
+    window.clearInterval(replayTimer)
+    replayTimer = null
+  }
+}
+
+const resetReplay = (): void => {
+  replayIndex.value = 0
+  applyReplayPoint()
+}
+
+const applyReplayPoint = (): void => {
+  const point = trackPoints.value[replayIndex.value]
+  if (!point) return
+  currentDrone.value = {
+    id: currentDrone.value?.id || detail.value.assignedDroneId || 0,
+    lat: point.lat,
+    lng: point.lng,
+    altitude: point.altitude,
+    label: currentDrone.value?.label || detail.value.droneCode || 'DRONE',
+    status: 'flying',
+    taskId: taskId.value
+  } as DroneMarker
+  droneMarkers.value = currentDrone.value ? [currentDrone.value] : []
+  mapRef.value?.updateReplaySegment?.(trackPoints.value.slice(0, replayIndex.value + 1))
+}
+
+watch(replayIndex, () => {
+  if (!replayPlaying.value) applyReplayPoint()
+})
+
+watch(trackPoints, (val: RoutePoint[]) => {
+  if (val.length > 0) {
+    mapRef.value?.updateTrack?.(val)
+    if (!replayPlaying.value) {
+      replayIndex.value = val.length - 1
+      applyReplayPoint()
+    }
+  }
+}, { deep: true })
+
+/**
  * 获取状态标签类型
  */
 const getStatusTagType = (status?: string): string => {
@@ -591,9 +897,9 @@ const getBatteryColor = (level?: number): string => {
 /**
  * 格式化日期时间
  */
-const formatDateTime = (dateStr?: string): string => {
+const formatDateTime = (dateStr?: string | Date): string => {
   if (!dateStr) return '-'
-  const date = new Date(dateStr)
+  const date = dateStr instanceof Date ? dateStr : new Date(dateStr)
   return date.toLocaleString('zh-CN')
 }
 
@@ -619,15 +925,138 @@ const getRiskColor = (risk: number): string => {
   return '#ff4d4f'
 }
 
+const formatRisk = (val: number): string => {
+  return `${(val / 100).toFixed(2)}`
+}
+
+/**
+ * 告警检测
+ */
+const checkAlerts = (position: DroneMarker): void => {
+  const now = Date.now()
+  const slaMinutes = detail.value.slaMinutes || 0
+  if (slaMinutes && detail.value.requestTime) {
+    const start = new Date(detail.value.requestTime).getTime()
+    const deadline = start + slaMinutes * 60 * 1000
+    if (now > deadline) {
+      pushAlert('任务超时', '已超过SLA时限', 'error')
+    }
+  }
+
+  if (routePoints.value.length > 1) {
+    const dist = getMinDistanceToRoute(position, routePoints.value)
+    if (dist > 200) {
+      pushAlert('偏航告警', `当前偏离航线约 ${Math.round(dist)} 米`, 'warning')
+    }
+  }
+}
+
+const pushAlert = (title: string, detailText: string, level: 'warning' | 'error' | 'info'): void => {
+  if (alerts.value.find(a => a.title === title && a.detail === detailText)) return
+  alerts.value.unshift({ title, detail: detailText, level })
+}
+
+const getMinDistanceToRoute = (pos: DroneMarker, route: RoutePoint[]): number => {
+  let min = Number.MAX_VALUE
+  for (let i = 0; i < route.length - 1; i++) {
+    const a = route[i]
+    const b = route[i + 1]
+    const d = distancePointToSegmentMeters(pos, a, b)
+    min = Math.min(min, d)
+  }
+  return min
+}
+
+const distancePointToSegmentMeters = (p: RoutePoint, a: RoutePoint, b: RoutePoint): number => {
+  const R = 6371000
+  const toRad = (v: number) => (v * Math.PI) / 180
+  const refLat = (a.lat + b.lat) / 2
+  const ax = toRad(a.lng) * Math.cos(toRad(refLat)) * R
+  const ay = toRad(a.lat) * R
+  const bx = toRad(b.lng) * Math.cos(toRad(refLat)) * R
+  const by = toRad(b.lat) * R
+  const px = toRad(p.lng) * Math.cos(toRad(refLat)) * R
+  const py = toRad(p.lat) * R
+
+  const abx = bx - ax
+  const aby = by - ay
+  const apx = px - ax
+  const apy = py - ay
+  const ab2 = abx * abx + aby * aby
+  const t = ab2 === 0 ? 0 : Math.max(0, Math.min(1, (apx * abx + apy * aby) / ab2))
+  const cx = ax + t * abx
+  const cy = ay + t * aby
+  const dx = px - cx
+  const dy = py - cy
+  return Math.sqrt(dx * dx + dy * dy)
+}
+
+const formatTrackTime = (timestamp?: number): string => {
+  if (!timestamp) return '-'
+  const ts = timestamp < 1e12 ? timestamp * 1000 : timestamp
+  const d = new Date(ts)
+  return d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+}
+
+const formatCoord = (lng?: number, lat?: number): string => {
+  if (!lng || !lat) return '-'
+  return `${Number(lng).toFixed(5)}, ${Number(lat).toFixed(5)}`
+}
+
+const findClosestRouteIndex = (pos: RoutePoint, route: RoutePoint[]): number => {
+  let min = Number.MAX_VALUE
+  let idx = 0
+  for (let i = 0; i < route.length; i++) {
+    const d = haversineMeters(pos, route[i])
+    if (d < min) {
+      min = d
+      idx = i
+    }
+  }
+  return idx
+}
+
+const haversineMeters = (a: RoutePoint, b: RoutePoint): number => {
+  const R = 6371000
+  const toRad = (v: number) => (v * Math.PI) / 180
+  const dLat = toRad(b.lat - a.lat)
+  const dLng = toRad(b.lng - a.lng)
+  const s =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2
+  return 2 * R * Math.asin(Math.sqrt(s))
+}
+
+const loadMapConfig = async (): Promise<void> => {
+  try {
+    const res: any = await request.get('/route/config')
+    const data = res?.data || res
+    if (data?.coordType === 'wgs84' || data?.coordType === 'bd09' || data?.coordType === 'gcj02') {
+      coordType.value = data.coordType
+    }
+  } catch {
+    // ignore
+  }
+}
+
 onMounted(async () => {
+  await loadMapConfig()
   await loadTaskDetail()
   if (detail.value.status === 'pending' && isAdmin.value) {
     await loadAvailableDrones()
   }
+  timer = window.setInterval(() => {
+    nowTick.value = Date.now()
+  }, 1000)
   ws.connect()
 })
 
 onBeforeUnmount(() => {
+  if (timer) {
+    window.clearInterval(timer)
+    timer = null
+  }
+  stopReplay()
   ws.disconnect()
 })
 </script>
@@ -635,8 +1064,15 @@ onBeforeUnmount(() => {
 <style scoped lang="scss">
 .task-detail {
   padding: 20px;
-  background: #f5f7fa;
+  background: transparent;
   min-height: calc(100vh - 60px);
+}
+
+.info-card,
+.progress-card {
+  border-radius: 14px;
+  background: linear-gradient(135deg, rgba(11, 24, 48, 0.95) 0%, rgba(8, 18, 36, 0.95) 100%);
+  border: 1px solid rgba(86, 211, 255, 0.15);
 }
 
 .card-header {
@@ -676,7 +1112,9 @@ onBeforeUnmount(() => {
   flex-direction: column;
   border-radius: 12px;
   overflow: hidden;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+  background: linear-gradient(135deg, rgba(11, 24, 48, 0.92), rgba(8, 18, 36, 0.92));
+  border: 1px solid rgba(86, 211, 255, 0.18);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
 }
 
 .map-container {
@@ -691,7 +1129,7 @@ onBeforeUnmount(() => {
   position: absolute;
   bottom: 20px;
   left: 20px;
-  background: rgba(255, 255, 255, 0.95);
+  background: rgba(10, 20, 40, 0.85);
   backdrop-filter: blur(10px);
   padding: 12px 16px;
   border-radius: 8px;
@@ -707,7 +1145,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 8px;
   font-size: 12px;
-  color: #666;
+  color: #9bb3d3;
 }
 
 .legend-line {
@@ -722,24 +1160,31 @@ onBeforeUnmount(() => {
   gap: 8px;
 }
 
+.trip-badges {
+  margin-top: 8px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .drone-info-card {
   margin-top: 16px;
   padding: 20px;
-  background: linear-gradient(135deg, #f5f7fa 0%, #ffffff 100%);
+  background: linear-gradient(135deg, rgba(8, 17, 34, 0.9) 0%, rgba(12, 26, 52, 0.9) 100%);
   border-radius: 10px;
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
-  border: 1px solid rgba(0, 0, 0, 0.06);
+  border: 1px solid rgba(86, 211, 255, 0.2);
 }
 
 .route-info-card {
   margin-top: 16px;
   padding: 16px;
-  background: #fafafa;
+  background: rgba(8, 17, 34, 0.7);
   border-radius: 8px;
   
   .info-value {
     font-weight: 600;
-    color: #1890ff;
+    color: #56d3ff;
     font-size: 14px;
   }
 }
@@ -754,7 +1199,7 @@ onBeforeUnmount(() => {
 .drone-name {
   font-size: 16px;
   font-weight: 500;
-  color: #333;
+  color: #e6f0ff;
 }
 
 .info-content {
@@ -770,17 +1215,128 @@ onBeforeUnmount(() => {
   
   .label {
     width: 60px;
-    color: #666;
+    color: #9bb3d3;
     font-size: 14px;
   }
   
   .value {
-    color: #333;
+    color: #e6f0ff;
     font-weight: 500;
   }
   
   :deep(.el-progress) {
     flex: 1;
   }
+}
+
+.replay-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  color: #e6f0ff;
+}
+.replay-controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.replay-timeline {
+  margin-top: 8px;
+}
+.timeline-track {
+  position: relative;
+  height: 6px;
+  background: rgba(86, 211, 255, 0.12);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.timeline-progress {
+  height: 100%;
+  background: linear-gradient(90deg, #56d3ff 0%, #ff4d4f 100%);
+}
+.timeline-thumb {
+  position: absolute;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #ff4d4f;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 10px rgba(255, 77, 79, 0.6);
+}
+.timeline-ticks {
+  margin-top: 6px;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  font-size: 10px;
+  color: #6f89ab;
+}
+.timeline-ticks .tick {
+  text-align: center;
+}
+.timeline-labels {
+  margin-top: 6px;
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: #9bb3d3;
+}
+
+.trip-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.trip-point {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.trip-point .dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+.trip-point .dot.start {
+  background: #52c41a;
+  box-shadow: 0 0 6px rgba(82, 196, 26, 0.6);
+}
+.trip-point .dot.end {
+  background: #ff4d4f;
+  box-shadow: 0 0 6px rgba(255, 77, 79, 0.6);
+}
+.trip-point .label {
+  width: 40px;
+  color: #9bb3d3;
+  font-size: 12px;
+}
+.trip-point .value {
+  color: #e6f0ff;
+  font-weight: 500;
+}
+.trip-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.metric {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(86, 211, 255, 0.08);
+  border: 1px solid rgba(86, 211, 255, 0.18);
+}
+.metric-label {
+  font-size: 12px;
+  color: #9bb3d3;
+}
+.metric-value {
+  margin-top: 4px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #56d3ff;
 }
 </style>

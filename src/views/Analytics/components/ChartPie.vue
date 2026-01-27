@@ -22,9 +22,20 @@ onBeforeUnmount(() => chart?.dispose())
 function render() {
   if (!chart) return
   chart.setOption({
-    title: { text: props.title || '' },
+    title: { text: props.title || '', textStyle: { color: '#e6f0ff' } },
     tooltip: { trigger: 'item' },
-    series: [{ type: 'pie', radius: '60%', data: props.data }],
+    series: [
+      {
+        type: 'pie',
+        radius: ['40%', '65%'],
+        label: { color: '#9bb3d3' },
+        data: props.data,
+        itemStyle: {
+          borderColor: 'rgba(8, 17, 34, 0.8)',
+          borderWidth: 2,
+        }
+      }
+    ],
   })
 }
 </script>

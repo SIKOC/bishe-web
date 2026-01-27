@@ -21,10 +21,31 @@ onBeforeUnmount(() => chart?.dispose())
 function render() {
   if (!chart) return
   chart.setOption({
-    title: { text: props.title || '' },
-    xAxis: { type: 'category', data: props.x },
-    yAxis: { type: 'value' },
-    series: [{ type: 'bar', data: props.y }],
+    title: { text: props.title || '', textStyle: { color: '#e6f0ff' } },
+    xAxis: {
+      type: 'category',
+      data: props.x,
+      axisLine: { lineStyle: { color: 'rgba(86, 211, 255, 0.35)' } },
+      axisLabel: { color: '#9bb3d3' },
+    },
+    yAxis: {
+      type: 'value',
+      axisLine: { lineStyle: { color: 'rgba(86, 211, 255, 0.35)' } },
+      splitLine: { lineStyle: { color: 'rgba(86, 211, 255, 0.12)' } },
+      axisLabel: { color: '#9bb3d3' },
+    },
+    series: [
+      {
+        type: 'bar',
+        data: props.y,
+        itemStyle: {
+          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+            { offset: 0, color: '#56d3ff' },
+            { offset: 1, color: '#2b5cff' },
+          ]),
+        },
+      }
+    ],
   })
 }
 </script>

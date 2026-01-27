@@ -39,12 +39,13 @@ const globalLoading = ref(false)
 
 <style scoped>
 .aside {
-  border-right: 1px solid var(--el-border-color);
+  border-right: none;
+  background: #0a1730;
 }
 .header {
   display: flex;
   align-items: center;
-  border-bottom: 1px solid var(--el-border-color);
+  height: 56px;
 }
 .main {
   padding: 12px;

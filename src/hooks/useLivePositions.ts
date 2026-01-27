@@ -25,6 +25,7 @@ export function useLivePositions(options: UseLivePositionsOptions = {}) {
   const { wsUrl, pollInterval = 2000, enablePolling = true } = options
   
   const markers: Ref<DroneMarker[]> = ref([])
+  const connected = ref(false)
   let pollTimer: number | null = null
   let useWebSocketMode = false
 
@@ -93,9 +94,7 @@ export function useLivePositions(options: UseLivePositionsOptions = {}) {
    * WebSocket消息处理
    */
   const handleWebSocketMessage = (message: WebSocketMessage): void => {
-    if (message.type === 'drone_position' && Array.isArray(message.data)) {
-      // 批量更新位置
-      const updates = message.data as DronePositionDTO[]
+    const applyUpdates = (updates: DronePositionDTO[]): void => {
       updates.forEach(dto => {
         const marker = convertToMarker(dto)
         const index = markers.value.findIndex(m => m.id === marker.id)
@@ -105,6 +104,22 @@ export function useLivePositions(options: UseLivePositionsOptions = {}) {
           markers.value.push(marker)
         }
       })
+    }
+
+    if (message.type === 'drone_position') {
+      if (Array.isArray(message.data)) {
+        applyUpdates(message.data as DronePositionDTO[])
+      } else if (message.data && typeof message.data === 'object') {
+        applyUpdates([message.data as DronePositionDTO])
+      }
+      return
+    }
+    if (message.type === 'drone_position_batch') {
+      const list = Array.isArray(message.data?.list) ? message.data.list : []
+      if (list.length > 0) {
+        applyUpdates(list as DronePositionDTO[])
+      }
+      return
     } else if (message.type === 'alert') {
       // 处理告警消息
       console.warn('Drone alert:', message.data)
@@ -136,11 +151,13 @@ export function useLivePositions(options: UseLivePositionsOptions = {}) {
       heartbeatInterval: 30000,
       getToken: () => localStorage.getItem('access_token'),
       onOpen: () => {
+        connected.value = true
         console.log('WebSocket connected for drone positions')
         // 初始加载一次数据
         pollPositions()
       },
       onClose: () => {
+        connected.value = false
         console.log('WebSocket disconnected, falling back to polling')
         if (enablePolling) {
           startPolling()
@@ -148,6 +165,7 @@ export function useLivePositions(options: UseLivePositionsOptions = {}) {
       },
       onError: (error) => {
         console.error('WebSocket error:', error)
+        connected.value = false
         if (enablePolling) {
           startPolling()
     }
@@ -213,6 +231,7 @@ export function useLivePositions(options: UseLivePositionsOptions = {}) {
       wsInstance.disconnect()
       wsInstance = null
     }
+    connected.value = false
   }
 
   onBeforeUnmount(() => {
@@ -221,6 +240,7 @@ export function useLivePositions(options: UseLivePositionsOptions = {}) {
 
   return {
     markers,
+    connected,
     start,
     stop,
     refresh: pollPositions

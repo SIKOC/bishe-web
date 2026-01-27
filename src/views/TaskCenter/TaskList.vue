@@ -41,6 +41,29 @@
       </el-form>
     </el-card>
 
+    <div class="ride-stats">
+      <div class="stat-card primary">
+        <div class="stat-title">全部任务</div>
+        <div class="stat-value">{{ stats.total }}</div>
+        <div class="stat-desc">今日调度总览</div>
+      </div>
+      <div class="stat-card warning">
+        <div class="stat-title">待处理</div>
+        <div class="stat-value">{{ stats.pending }}</div>
+        <div class="stat-desc">等待审核/调度</div>
+      </div>
+      <div class="stat-card info">
+        <div class="stat-title">进行中</div>
+        <div class="stat-value">{{ stats.inProgress }}</div>
+        <div class="stat-desc">实时飞行中</div>
+      </div>
+      <div class="stat-card success">
+        <div class="stat-title">已完成</div>
+        <div class="stat-value">{{ stats.completed }}</div>
+        <div class="stat-desc">本期完成</div>
+      </div>
+    </div>
+
     <el-card shadow="hover" class="table-card">
       <template #header>
         <div class="card-header">
@@ -52,48 +75,54 @@
         </div>
       </template>
 
-      <el-table
-        :data="filtered"
-        v-loading="loading"
-        style="width: 100%"
-        :row-class-name="getRowClassName"
-        @row-click="handleRowClick"
-      >
-        <el-table-column prop="id" label="任务ID" width="100" align="center">
-          <template #default="{ row }">
-            <el-tag type="info" size="small">#{{ row.id }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="name" label="任务名称" min-width="150">
-          <template #default="{ row }">
-            <div class="task-name">
-              <el-icon><Document /></el-icon>
-              <span>{{ row.name }}</span>
+      <div class="card-grid" v-loading="loading">
+        <div
+          v-for="row in displayList"
+          :key="row.id"
+          class="task-card"
+          draggable="true"
+          @dragstart="onDragStart(row)"
+          @dragover.prevent
+          @drop="onDrop(row)"
+          @click="handleRowClick(row)"
+        >
+          <div class="status-bubble" :class="getStatusBubbleClass(row.status)">
+            {{ row.status }}
+          </div>
+          <div class="pin-badge" v-if="isPinned(row.id)">置顶</div>
+          <div class="card-title">
+            <el-icon><Document /></el-icon>
+            <span>{{ row.name || `任务#${row.id}` }}</span>
+          </div>
+          <div class="route-thumb">
+            <div class="thumb-dot start"></div>
+            <div class="thumb-line"></div>
+            <div class="thumb-dot end"></div>
+            <div class="thumb-labels">
+              <span>{{ row.originName || row.origin || '起点' }}</span>
+              <span>{{ row.destName || row.destination || '终点' }}</span>
             </div>
-          </template>
-        </el-table-column>
-        <el-table-column label="状态" width="120" align="center">
-          <template #default="{ row }">
-            <el-tag :type="getTagType(row.status)" size="small" effect="dark">
-              {{ row.status }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="优先级" width="120" align="center">
-          <template #default="{ row }">
+          </div>
+          <div class="card-meta">
+            <span class="meta-label">任务ID</span>
+            <span class="meta-value">#{{ row.id }}</span>
+          </div>
+          <div class="card-meta">
+            <span class="meta-label">创建时间</span>
+            <span class="meta-value">{{ formatTime(row.time) }}</span>
+          </div>
+          <div class="card-meta">
+            <span class="meta-label">优先级</span>
             <el-rate v-model="row.priorityNum" disabled :max="5" size="small" />
-          </template>
-        </el-table-column>
-        <el-table-column prop="time" label="创建时间" width="180">
-          <template #default="{ row }">
-            <span class="time-text">{{ formatTime(row.time) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="280" fixed="right">
-          <template #default="{ row }">
+          </div>
+          <div class="card-actions">
             <el-button size="small" @click.stop="detail(row.id)">
               <el-icon><View /></el-icon>
               详情
+            </el-button>
+            <el-button size="small" @click.stop="togglePin(row)">
+              <el-icon><Top /></el-icon>
+              {{ isPinned(row.id) ? '取消置顶' : '置顶' }}
             </el-button>
             <el-button
               v-if="row.status === '待审核' && isAdmin"
@@ -122,9 +151,9 @@
               <el-icon><Close /></el-icon>
               取消
             </el-button>
-          </template>
-        </el-table-column>
-      </el-table>
+          </div>
+        </div>
+      </div>
 
       <div class="pagination-wrapper">
         <el-pagination
@@ -182,10 +211,10 @@
  * @author System
  * @date 2025-01
  */
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Refresh, Plus, Document, View, Check, User, Close } from '@element-plus/icons-vue'
+import { Search, Refresh, Plus, Document, View, Check, User, Close, Top } from '@element-plus/icons-vue'
 import { fetchTaskList, auditTask, updateTaskStatus } from '@/api/task'
 import request from '@/utils/request'
 
@@ -220,11 +249,47 @@ const isAdmin = computed(() => {
   return true
 })
 
+const orderIds = ref<number[]>([])
+const pinnedIds = ref<number[]>([])
+const dragId = ref<number | null>(null)
+const storageKey = 'task_list_order_v1'
+
 const filtered = computed(() => {
-  return taskList.value.map(t => ({
+  return taskList.value.map((t, idx) => ({
     ...t,
+    __index: idx,
     priorityNum: t.priority === '低' ? 1 : t.priority === '中' ? 3 : 5
   }))
+})
+
+const displayList = computed(() => {
+  const list = filtered.value.slice()
+  const orderIndex = (id: number) => {
+    const idx = orderIds.value.indexOf(id)
+    return idx === -1 ? Number.MAX_SAFE_INTEGER : idx
+  }
+  return list.sort((a, b) => {
+    const pa = isPinned(a.id) ? 0 : 1
+    const pb = isPinned(b.id) ? 0 : 1
+    if (pa !== pb) return pa - pb
+    const oa = orderIndex(a.id)
+    const ob = orderIndex(b.id)
+    if (oa !== ob) return oa - ob
+    return (a.__index || 0) - (b.__index || 0)
+  })
+})
+
+const stats = computed(() => {
+  const list = taskList.value
+  const pendingSet = new Set(['待审核', '待调度', 'pending'])
+  const inProgressSet = new Set(['进行中', '飞行中', 'in_progress'])
+  const completedSet = new Set(['已完成', 'completed'])
+  return {
+    total: list.length,
+    pending: list.filter(t => pendingSet.has(t.status)).length,
+    inProgress: list.filter(t => inProgressSet.has(t.status)).length,
+    completed: list.filter(t => completedSet.has(t.status)).length
+  }
 })
 
 /**
@@ -240,6 +305,9 @@ const load = async (): Promise<void> => {
     })
     taskList.value = list
     total.value = list.length // TODO: 从后端获取总数
+    if (orderIds.value.length === 0) {
+      orderIds.value = list.map((t: any) => t.id)
+    }
   } catch (error) {
     ElMessage.error('加载任务列表失败')
     console.error(error)
@@ -262,6 +330,22 @@ const resetQuery = (): void => {
  */
 const handleRowClick = (row: any): void => {
   detail(row.id)
+}
+
+const onDragStart = (row: any): void => {
+  dragId.value = row.id
+}
+
+const onDrop = (row: any): void => {
+  if (!dragId.value || dragId.value === row.id) return
+  const ids = displayList.value.map(r => r.id)
+  const from = ids.indexOf(dragId.value)
+  const to = ids.indexOf(row.id)
+  if (from === -1 || to === -1) return
+  ids.splice(from, 1)
+  ids.splice(to, 0, dragId.value)
+  orderIds.value = ids
+  dragId.value = null
 }
 
 /**
@@ -371,6 +455,49 @@ const getTagType = (status: string): string => {
   return typeMap[status] || ''
 }
 
+const getStatusBubbleClass = (status: string): string => {
+  if (status === '已完成') return 'success'
+  if (status === '进行中' || status === '飞行中') return 'warning'
+  if (status === '已取消') return 'danger'
+  return 'info'
+}
+
+const togglePin = (row: any): void => {
+  const id = row.id
+  if (isPinned(id)) {
+    pinnedIds.value = pinnedIds.value.filter(v => v !== id)
+  } else {
+    pinnedIds.value = [id, ...pinnedIds.value]
+  }
+}
+
+const isPinned = (id: number): boolean => {
+  return pinnedIds.value.includes(id)
+}
+
+const loadOrderCache = (): void => {
+  try {
+    const raw = window.localStorage.getItem(storageKey)
+    if (!raw) return
+    const data = JSON.parse(raw)
+    if (Array.isArray(data?.orderIds)) orderIds.value = data.orderIds
+    if (Array.isArray(data?.pinnedIds)) pinnedIds.value = data.pinnedIds
+  } catch {
+    // ignore
+  }
+}
+
+const saveOrderCache = (): void => {
+  try {
+    window.localStorage.setItem(storageKey, JSON.stringify({
+      orderIds: orderIds.value,
+      pinnedIds: pinnedIds.value
+    }))
+  } catch {
+    // ignore
+  }
+}
+
 /**
  * 格式化时间
  */
@@ -401,24 +528,71 @@ const handleCurrentChange = (page: number): void => {
 }
 
 onMounted(() => {
+  loadOrderCache()
   load()
 })
+
+watch([orderIds, pinnedIds], () => {
+  saveOrderCache()
+}, { deep: true })
 </script>
 
 <style scoped lang="scss">
 .task-list {
   padding: 20px;
-  background: #f5f7fa;
+  background: transparent;
   min-height: calc(100vh - 60px);
 }
 
 .filter-card {
   margin-bottom: 20px;
   border-radius: 12px;
+  background: linear-gradient(135deg, rgba(11, 24, 48, 0.9), rgba(8, 18, 36, 0.9));
+  border: 1px solid rgba(86, 211, 255, 0.18);
 }
 
 .filter-form {
   margin: 0;
+}
+
+.ride-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.stat-card {
+  padding: 16px;
+  border-radius: 14px;
+  border: 1px solid rgba(86, 211, 255, 0.18);
+  background: linear-gradient(135deg, rgba(11, 24, 48, 0.9), rgba(8, 18, 36, 0.9));
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+}
+.stat-title {
+  color: #9bb3d3;
+  font-size: 12px;
+}
+.stat-value {
+  font-size: 24px;
+  font-weight: 700;
+  color: #e6f0ff;
+  margin: 6px 0;
+}
+.stat-desc {
+  color: #6f89ab;
+  font-size: 12px;
+}
+.stat-card.primary {
+  border-color: rgba(86, 211, 255, 0.35);
+}
+.stat-card.warning {
+  border-color: rgba(250, 173, 20, 0.35);
+}
+.stat-card.info {
+  border-color: rgba(24, 144, 255, 0.35);
+}
+.stat-card.success {
+  border-color: rgba(82, 196, 26, 0.35);
 }
 
 .table-card {
@@ -426,24 +600,142 @@ onMounted(() => {
   overflow: hidden;
 }
 
+.card-grid {
+  column-count: 3;
+  column-gap: 16px;
+}
+.task-card {
+  break-inside: avoid;
+  margin: 0 0 16px;
+  padding: 16px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, rgba(11, 24, 48, 0.95), rgba(8, 18, 36, 0.95));
+  border: 1px solid rgba(86, 211, 255, 0.18);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  position: relative;
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.task-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+}
+.status-bubble {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  color: #e6f0ff;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.08);
+}
+.status-bubble.success {
+  background: rgba(82, 196, 26, 0.18);
+  border-color: rgba(82, 196, 26, 0.5);
+}
+.status-bubble.warning {
+  background: rgba(250, 173, 20, 0.18);
+  border-color: rgba(250, 173, 20, 0.5);
+}
+.status-bubble.danger {
+  background: rgba(255, 77, 79, 0.18);
+  border-color: rgba(255, 77, 79, 0.5);
+}
+.card-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #e6f0ff;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+.pin-badge {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  padding: 2px 8px;
+  font-size: 11px;
+  color: #56d3ff;
+  background: rgba(86, 211, 255, 0.12);
+  border: 1px solid rgba(86, 211, 255, 0.35);
+  border-radius: 999px;
+}
+.route-thumb {
+  position: relative;
+  padding: 10px 8px 10px 20px;
+  margin-bottom: 10px;
+  border-radius: 10px;
+  background: rgba(86, 211, 255, 0.06);
+  border: 1px dashed rgba(86, 211, 255, 0.25);
+}
+.thumb-line {
+  position: absolute;
+  left: 12px;
+  top: 10px;
+  bottom: 10px;
+  width: 2px;
+  background: linear-gradient(180deg, rgba(82, 196, 26, 0.6), rgba(255, 77, 79, 0.8));
+}
+.thumb-dot {
+  position: absolute;
+  left: 7px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+.thumb-dot.start {
+  top: 8px;
+  background: #52c41a;
+}
+.thumb-dot.end {
+  bottom: 8px;
+  background: #ff4d4f;
+}
+.thumb-labels {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: #9bb3d3;
+}
+.card-meta {
+  display: flex;
+  justify-content: space-between;
+  color: #9bb3d3;
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+.card-meta .meta-value {
+  color: #e6f0ff;
+  font-weight: 500;
+}
+.card-actions {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .card-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   font-weight: 600;
-  color: #333;
+  color: #e6f0ff;
 }
 
 .task-name {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: #333;
+  color: #e6f0ff;
   font-weight: 500;
 }
 
 .time-text {
-  color: #666;
+  color: #9bb3d3;
   font-size: 13px;
 }
 

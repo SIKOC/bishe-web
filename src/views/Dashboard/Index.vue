@@ -65,7 +65,14 @@
             </div>
           </template>
           <div class="map-container">
-            <MapContainer :markers="markers" :show-toolbar="false" />
+            <MapContainer
+              ref="mapRef"
+              :markers="dashboardMarkers"
+              :center="dashboardCenter"
+              :show-toolbar="false"
+              :auto-fit="false"
+              @located="onLocated"
+            />
           </div>
         </el-card>
       </el-col>
@@ -176,6 +183,9 @@ import { useLivePositions } from '@/hooks/useLivePositions'
 const stats = ref({ waybills: 0, online: 0, alerts: 0, mileage: 0 })
 const concurrent = ref<{ x: string[]; y: number[] }>({ x: [], y: [] })
 const chartType = ref<'line' | 'bar'>('line')
+const mapRef = ref<any>(null)
+const dashboardCenter = ref<{ lng: number; lat: number } | null>(null)
+const currentLocation = ref<{ lng: number; lat: number } | null>(null)
 
 const todos = ref([
   { time: '09:00', title: '检查#03无人机电池', desc: '电池电量低于30%，需要检查', type: 'warning' },
@@ -191,6 +201,20 @@ const messages = ref([
 const { markers, start, stop, refresh } = useLivePositions({
   enablePolling: true,
   pollInterval: 3000
+})
+
+const dashboardMarkers = computed(() => {
+  const list = [...(markers.value || [])]
+  if (currentLocation.value) {
+    list.push({
+      id: 'self',
+      lng: currentLocation.value.lng,
+      lat: currentLocation.value.lat,
+      label: '当前位置',
+      status: 'flying'
+    })
+  }
+  return list
 })
 
 const statsList = computed(() => [
@@ -237,7 +261,13 @@ const statsList = computed(() => [
  */
 const refreshMap = (): void => {
   refresh()
+  mapRef.value?.locateNow?.()
   ElMessage.success('已刷新')
+}
+
+const onLocated = (e: any) => {
+  currentLocation.value = { lng: e.lng, lat: e.lat }
+  dashboardCenter.value = { lng: e.lng, lat: e.lat }
 }
 
 /**
@@ -288,6 +318,7 @@ onMounted(async () => {
   stats.value = await fetchDashboardStats()
   concurrent.value = await fetchConcurrent24h()
   start()
+  mapRef.value?.locateNow?.()
 })
 
 onBeforeUnmount(() => {
@@ -298,7 +329,7 @@ onBeforeUnmount(() => {
 <style scoped lang="scss">
 .dashboard {
   padding: 24px;
-  background: #f5f7fa;
+  background: transparent;
   min-height: calc(100vh - 60px);
 }
 
@@ -308,13 +339,13 @@ onBeforeUnmount(() => {
   .page-title {
     font-size: 32px;
     font-weight: 700;
-    color: #333;
+    color: #e6f0ff;
     margin: 0 0 8px 0;
   }
   
   .page-subtitle {
     font-size: 14px;
-    color: #666;
+    color: #9bb3d3;
     margin: 0;
   }
 }
@@ -327,31 +358,32 @@ onBeforeUnmount(() => {
   border-radius: 12px;
   overflow: hidden;
   transition: all 0.3s;
-  border: 2px solid transparent;
+  border: 1px solid rgba(88, 211, 255, 0.2);
+  background: rgba(11, 24, 48, 0.9);
   
   &:hover {
     transform: translateY(-4px);
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
   }
   
   &.primary {
-    border-color: rgba(24, 144, 255, 0.3);
-    background: linear-gradient(135deg, #e6f7ff 0%, #bae7ff 100%);
+    border-color: rgba(86, 211, 255, 0.35);
+    background: linear-gradient(135deg, rgba(9, 26, 52, 0.9), rgba(14, 58, 110, 0.9));
   }
   
   &.success {
-    border-color: rgba(82, 196, 26, 0.3);
-    background: linear-gradient(135deg, #f6ffed 0%, #d9f7be 100%);
+    border-color: rgba(82, 196, 26, 0.35);
+    background: linear-gradient(135deg, rgba(7, 40, 34, 0.9), rgba(13, 80, 60, 0.9));
   }
   
   &.warning {
-    border-color: rgba(250, 173, 20, 0.3);
-    background: linear-gradient(135deg, #fffbe6 0%, #ffe58f 100%);
+    border-color: rgba(250, 173, 20, 0.35);
+    background: linear-gradient(135deg, rgba(44, 30, 8, 0.9), rgba(92, 60, 12, 0.9));
   }
   
   &.info {
-    border-color: rgba(114, 46, 209, 0.3);
-    background: linear-gradient(135deg, #f9f0ff 0%, #efdbff 100%);
+    border-color: rgba(114, 46, 209, 0.35);
+    background: linear-gradient(135deg, rgba(28, 18, 52, 0.9), rgba(52, 26, 92, 0.9));
   }
 }
 
@@ -368,7 +400,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(255, 255, 255, 0.6);
+  background: rgba(255, 255, 255, 0.08);
   border-radius: 16px;
 }
 
@@ -379,14 +411,14 @@ onBeforeUnmount(() => {
 .stat-value {
   font-size: 36px;
   font-weight: 700;
-  color: #333;
+  color: #e6f0ff;
   line-height: 1.2;
   margin-bottom: 8px;
 }
 
 .stat-label {
   font-size: 14px;
-  color: #666;
+  color: #9bb3d3;
 }
 
 .stat-trend {
@@ -414,25 +446,26 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   align-items: center;
   font-weight: 600;
-  color: #333;
+  color: #e6f0ff;
 }
 
 .map-container {
   height: 400px;
   border-radius: 8px;
   overflow: hidden;
+  border: 1px solid rgba(88, 211, 255, 0.2);
 }
 
 .todo-content {
   .todo-title {
     font-weight: 500;
-    color: #333;
+    color: #e6f0ff;
     margin-bottom: 4px;
   }
   
   .todo-desc {
     font-size: 12px;
-    color: #666;
+    color: #9bb3d3;
   }
 }
 
@@ -447,13 +480,13 @@ onBeforeUnmount(() => {
   align-items: flex-start;
   gap: 12px;
   padding: 16px;
-  background: #fafafa;
+  background: rgba(10, 20, 40, 0.8);
   border-radius: 8px;
   border-left: 4px solid transparent;
   transition: all 0.3s;
   
   &:hover {
-    background: #f0f0f0;
+    background: rgba(86, 211, 255, 0.1);
   }
   
   &.warning {

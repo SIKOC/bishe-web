@@ -203,12 +203,12 @@ const droneRoutes = ref<Map<number | string, RoutePoint[]>>(new Map())
 
 // 获取WebSocket地址（从环境变量或配置）
 const wsUrl = computed(() => {
-  const baseUrl = import.meta.env.VITE_WS_BASE || window.location.origin.replace('http', 'ws')
-  return `${baseUrl}/api/ws/monitor`
+  const baseUrl = import.meta.env.VITE_NETTY_WS_BASE || 'ws://localhost:18080'
+  return `${baseUrl}/ws`
 })
 
 // 使用实时位置Hook
-const { markers, start, stop, refresh } = useLivePositions({
+const { markers, connected: wsConnected, start, stop, refresh } = useLivePositions({
   wsUrl: wsUrl.value,
   enablePolling: true,
   pollInterval: 2000
@@ -454,7 +454,10 @@ const formatTime = (timestamp: number): string => {
 
 onMounted(() => {
   start()
-  connected.value = true // TODO: 从WebSocket连接状态获取
+})
+
+watch(wsConnected, (value) => {
+  connected.value = value
 })
 
 onBeforeUnmount(() => {

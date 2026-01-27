@@ -90,36 +90,86 @@
         </template>
 
         <div class="search-section">
-          <el-row :gutter="16">
-            <el-col :span="12">
+          <div class="ride-card">
+            <div class="ride-line">
+              <div class="ride-dot start"></div>
+              <div class="ride-rail"></div>
+              <div class="ride-dot end"></div>
+            </div>
+            <div class="ride-inputs">
               <el-autocomplete
+                ref="originInputRef"
                 v-model="search.origin"
                 :fetch-suggestions="queryOrigin"
+                :loading="originLoading"
+                :trigger-on-focus="true"
                 placeholder="输入起点，如：市立医院"
                 @select="onSelectOrigin"
                 clearable
                 style="width: 100%"
+                class="ride-input"
               >
                 <template #prefix>
                   <el-icon><Location /></el-icon>
                 </template>
+                <template #default="{ item }">
+                  <div class="tip-item">
+                    <div class="tip-name">{{ item.name || item.value }}</div>
+                    <div class="tip-address">{{ item.address || item.district || '' }}</div>
+                  </div>
+                </template>
               </el-autocomplete>
-            </el-col>
-            <el-col :span="12">
               <el-autocomplete
+                ref="destInputRef"
                 v-model="search.dest"
                 :fetch-suggestions="queryDest"
+                :loading="destLoading"
+                :trigger-on-focus="true"
                 placeholder="输入终点，如：中心医院"
                 @select="onSelectDest"
                 clearable
                 style="width: 100%"
+                class="ride-input"
               >
                 <template #prefix>
                   <el-icon><LocationFilled /></el-icon>
                 </template>
+                <template #default="{ item }">
+                  <div class="tip-item">
+                    <div class="tip-name">{{ item.name || item.value }}</div>
+                    <div class="tip-address">{{ item.address || item.district || '' }}</div>
+                  </div>
+                </template>
               </el-autocomplete>
-            </el-col>
-          </el-row>
+            </div>
+          </div>
+          <div class="poi-examples">
+            <span class="poi-label">POI搜索示例：</span>
+            <el-tag
+              v-for="item in poiExamples"
+              :key="item"
+              size="small"
+              class="poi-tag"
+              @click="applyPoiExample(item)"
+            >
+              {{ item }}
+            </el-tag>
+          </div>
+          <div class="locate-actions">
+            <el-button size="small" @click="locateNow" :loading="locating">
+              <el-icon><Location /></el-icon>
+              定位当前位置
+            </el-button>
+            <el-button size="small" type="primary" @click="useCurrentAsOrigin" :disabled="!currentLocation">
+              当前位置设为起点
+            </el-button>
+            <el-button size="small" type="success" @click="useCurrentAsDest" :disabled="!currentLocation">
+              当前位置设为终点
+            </el-button>
+          </div>
+          <div v-if="locateHint" class="locate-hint">
+            {{ locateHint }}
+          </div>
         </div>
 
         <div class="map-section">
@@ -127,8 +177,12 @@
             :markers="markers"
             :center="centerRef"
             :route="previewRoute"
-            @map-click="onMapClick"
+            :coord-type="coordType"
             @located="onLocated"
+            @locate-error="onLocateError"
+            @locate-progress="locateHint = $event"
+            @map-click="onMapClick"
+            ref="mapRef"
           />
         </div>
 
@@ -207,6 +261,7 @@
                   :markers="routeMarkers"
                   :route="routePoints"
                   :show-toolbar="true"
+                  :coord-type="coordType"
                 />
                 <div class="map-legend">
                   <div class="legend-item">
@@ -362,10 +417,11 @@
  * @author System
  * @date 2025-01
  */
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Location, LocationFilled, Refresh, Loading } from '@element-plus/icons-vue'
+import AMapLoader from '@amap/amap-jsapi-loader'
 import MapContainer from '@/components/MapContainer.vue'
 import { createTask } from '@/api/task'
 import { calculateRoute as calculateRouteAPI, type RouteResult, type RouteOptions } from '@/api/route'
@@ -380,6 +436,26 @@ const submitting = ref(false)
 const routeLoading = ref(false)
 const routeResult = ref<RouteResult | null>(null)
 const routeStrategy = ref<'shortest' | 'safest' | 'fastest'>('shortest')
+const mapRef = ref<any>(null)
+const currentLocation = ref<{ lng: number; lat: number; address?: string } | null>(null)
+const coordType = ref<'gcj02' | 'wgs84' | 'bd09'>('gcj02')
+const locating = ref(false)
+const locateHint = ref('')
+const originLoading = ref(false)
+const destLoading = ref(false)
+const tipCache = new Map<string, any[]>()
+let originTimer: number | null = null
+let destTimer: number | null = null
+let amapAutocomplete: any = null
+let amapReady: Promise<any> | null = null
+const preRouteCache = ref<{ key: string; result: RouteResult } | null>(null)
+const preloading = ref(false)
+let preloadTimer: number | null = null
+const RECENT_KEY = 'taskCreateRecentLocations'
+const recentLocations = ref<Array<{ label: string; lng: number; lat: number; ts: number }>>([])
+const poiExamples = ['中南大学', '湘雅医院', '长沙火车站', '五一广场', '省人民医院']
+const originInputRef = ref()
+const destInputRef = ref()
 
 const form = ref({
   type: 'supplies_transport',
@@ -406,6 +482,10 @@ const rules = {
   priority: [{ required: true, message: '请选择优先级', trigger: 'change' }]
 }
 
+const isSamePoint = (a: { lng: number; lat: number }, b: { lng: number; lat: number }): boolean => {
+  return a.lng.toFixed(6) === b.lng.toFixed(6) && a.lat.toFixed(6) === b.lat.toFixed(6)
+}
+
 // 标记点
 const markers = computed(() => {
   const list: DroneMarker[] = []
@@ -426,6 +506,22 @@ const markers = computed(() => {
       label: '终点',
       status: 'warning'
     })
+  }
+  if (currentLocation.value) {
+    const current = { lng: currentLocation.value.lng, lat: currentLocation.value.lat }
+    const origin = form.value.origin_lat ? { lng: form.value.origin_lng, lat: form.value.origin_lat } : null
+    const dest = form.value.dest_lat ? { lng: form.value.dest_lng, lat: form.value.dest_lat } : null
+    const sameAsOrigin = origin && isSamePoint(current, origin)
+    const sameAsDest = dest && isSamePoint(current, dest)
+    if (!sameAsOrigin && !sameAsDest) {
+      list.push({
+        id: 'current',
+        lat: current.lat,
+        lng: current.lng,
+        label: '当前位置',
+        status: 'flying'
+      })
+    }
   }
   return list
 })
@@ -478,15 +574,28 @@ const routeMarkers = computed(() => {
   return list
 })
 
-// 监听起点终点变化，自动计算路径（仅在步骤2时）
+// 监听起点终点变化，自动计算路径（步骤2）并预加载（步骤1）
 watch(
   () => [form.value.origin_lat, form.value.origin_lng, form.value.dest_lat, form.value.dest_lng, step.value],
   ([originLat, originLng, destLat, destLng, currentStep]) => {
-    if (originLat && originLng && destLat && destLng && currentStep === 2 && !routeLoading.value) {
-      calculateRoute()
+    if (!originLat || !originLng || !destLat || !destLng) return
+    if (currentStep === 2 && !routeLoading.value) {
+      calculateRoute({ usePreload: true })
+    } else if (currentStep === 1) {
+      schedulePreload()
     }
   },
   { deep: true }
+)
+
+watch(
+  () => [routeStrategy.value, form.value.avoidNoFlyZones, form.value.considerWeather, step.value],
+  ([, , , currentStep]) => {
+    if (currentStep !== 1) return
+    if (form.value.origin_lat && form.value.dest_lat) {
+      schedulePreload()
+    }
+  }
 )
 
 const next = () => {
@@ -497,7 +606,7 @@ const next = () => {
       return
     }
     // 进入路径预览前先计算路径
-    calculateRoute().then(() => {
+    calculateRoute({ usePreload: true }).then(() => {
       step.value++
     })
   } else if (step.value === 2) {
@@ -523,36 +632,70 @@ const handleNext = () => {
 /**
  * 计算路径规划
  */
-const calculateRoute = async (): Promise<void> => {
-  if (!form.value.origin_lat || !form.value.dest_lat) {
-    ElMessage.warning('请先选择起点和终点')
-    return
-  }
+const buildRouteKey = (): string => {
+  if (!form.value.origin_lat || !form.value.dest_lat) return ''
+  return [
+    form.value.origin_lng.toFixed(6),
+    form.value.origin_lat.toFixed(6),
+    form.value.dest_lng.toFixed(6),
+    form.value.dest_lat.toFixed(6),
+    routeStrategy.value,
+    form.value.avoidNoFlyZones ? '1' : '0',
+    form.value.considerWeather ? '1' : '0'
+  ].join('|')
+}
 
-  routeLoading.value = true
-  try {
+const requestRoute = async (): Promise<RouteResult> => {
   const options: RouteOptions = {
     avoidNoFlyZones: form.value.avoidNoFlyZones,
     considerWeather: form.value.considerWeather,
     optimizeStrategy: routeStrategy.value
   }
-    
-    const result = await calculateRouteAPI({
-      originLng: form.value.origin_lng,
-      originLat: form.value.origin_lat,
-      destLng: form.value.dest_lng,
-      destLat: form.value.dest_lat,
-      options
-    })
-    
+  return calculateRouteAPI({
+    originLng: form.value.origin_lng,
+    originLat: form.value.origin_lat,
+    destLng: form.value.dest_lng,
+    destLat: form.value.dest_lat,
+    options
+  })
+}
+
+const calculateRoute = async (opts: { silent?: boolean; usePreload?: boolean } = {}): Promise<void> => {
+  if (!form.value.origin_lat || !form.value.dest_lat) {
+    if (!opts.silent) {
+      ElMessage.warning('请先选择起点和终点')
+    }
+    return
+  }
+
+  const key = buildRouteKey()
+  if (opts.usePreload && key && preRouteCache.value?.key === key) {
+    routeResult.value = preRouteCache.value.result
+    return
+  }
+
+  if (!opts.silent) {
+    routeLoading.value = true
+  }
+  try {
+    const result = await requestRoute()
     routeResult.value = result
-    ElMessage.success('路径规划成功，已生成沿道路正上方的飞行路径')
+    if (key) {
+      preRouteCache.value = { key, result }
+    }
+    if (!opts.silent) {
+      ElMessage.success('路径规划成功，已生成沿道路正上方的飞行路径')
+    }
   } catch (error: any) {
     console.error('Path planning failed:', error)
-    ElMessage.error(error?.message || '路径规划失败，请稍后重试')
-    routeResult.value = null
+    if (!opts.silent) {
+      ElMessage.error(error?.message || '路径规划失败，请稍后重试')
+      routeResult.value = null
+    }
   } finally {
-    routeLoading.value = false
+    if (!opts.silent) {
+      routeLoading.value = false
+    }
   }
 }
 
@@ -564,71 +707,317 @@ const changeStrategy = (strategy: 'shortest' | 'safest' | 'fastest'): void => {
   calculateRoute()
 }
 
-const onMapClick = (e: any) => {
-  if (selectMode.value === 'origin') {
-    form.value.origin_lng = e.lng
-    form.value.origin_lat = e.lat
-    selectMode.value = 'dest'
-    ElMessage.success('起点已选择，请选择终点')
-  } else {
-    form.value.dest_lng = e.lng
-    form.value.dest_lat = e.lat
-    ElMessage.success('终点已选择')
-  }
-}
-
 const onLocated = (e: any) => {
-  if (!form.value.origin_lat || !form.value.origin_lng) {
-    form.value.origin_lng = e.lng
-    form.value.origin_lat = e.lat
-    centerRef.value = { lng: e.lng, lat: e.lat }
+  currentLocation.value = { lng: e.lng, lat: e.lat, address: e.address }
+  centerRef.value = { lng: e.lng, lat: e.lat }
+  locating.value = false
+  locateHint.value = '定位成功'
+}
+
+const locateNow = (): void => {
+  if (!mapRef.value?.locateNow) {
+    ElMessage.warning('地图尚未就绪，请稍后再试')
+    return
+  }
+  locateHint.value = '正在提高精度...'
+  locating.value = true
+  mapRef.value.locateNow()
+}
+
+const onLocateError = (message: string): void => {
+  locating.value = false
+  locateHint.value = message || '定位失败'
+  ElMessage.warning(message || '定位失败')
+}
+
+const onMapClick = (point: { lng: number; lat: number }): void => {
+  if (selectMode.value === 'origin') {
+    setOrigin(point, `已选点 ${formatPoint(point)}`)
     selectMode.value = 'dest'
+  } else {
+    setDest(point, `已选点 ${formatPoint(point)}`)
   }
 }
 
-const queryOrigin = async (q: string, cb: any) => {
-  if (!q) return cb([])
-  try {
-    const res: any = await request.get('/route/tips', { params: { keywords: q } })
-    const list = (res?.data || res || []).map((it: any) => ({
-      value: `${it.name} ${it.address || ''}`,
-      lng: it.lng,
-      lat: it.lat
-    }))
-    cb(list)
-  } catch {
-    cb([])
-  }
+const formatPoint = (p: { lng: number; lat: number }): string => {
+  return `${p.lng.toFixed(6)}, ${p.lat.toFixed(6)}`
 }
 
-const queryDest = async (q: string, cb: any) => {
-  if (!q) return cb([])
-  try {
-    const res: any = await request.get('/route/tips', { params: { keywords: q } })
-    const list = (res?.data || res || []).map((it: any) => ({
-      value: `${it.name} ${it.address || ''}`,
-      lng: it.lng,
-      lat: it.lat
-    }))
-    cb(list)
-  } catch {
-    cb([])
-  }
+const isValidLngLat = (lng?: number, lat?: number): boolean => {
+  if (lng === undefined || lat === undefined) return false
+  const nLng = Number(lng)
+  const nLat = Number(lat)
+  if (!Number.isFinite(nLng) || !Number.isFinite(nLat)) return false
+  if (nLng < -180 || nLng > 180 || nLat < -90 || nLat > 90) return false
+  return true
 }
 
-const onSelectOrigin = (it: any) => {
-  form.value.origin_lng = it.lng
-  form.value.origin_lat = it.lat
-  centerRef.value = { lng: it.lng, lat: it.lat }
-  search.value.origin = it.value
+const setOrigin = (p: { lng: number; lat: number }, label?: string): void => {
+  form.value.origin_lng = p.lng
+  form.value.origin_lat = p.lat
+  centerRef.value = { lng: p.lng, lat: p.lat }
+  search.value.origin = label || formatPoint(p)
+  addRecentLocation(label || formatPoint(p), p.lng, p.lat)
+}
+
+const setDest = (p: { lng: number; lat: number }, label?: string): void => {
+  form.value.dest_lng = p.lng
+  form.value.dest_lat = p.lat
+  centerRef.value = { lng: p.lng, lat: p.lat }
+  search.value.dest = label || formatPoint(p)
+  addRecentLocation(label || formatPoint(p), p.lng, p.lat)
+}
+
+const useCurrentAsOrigin = (): void => {
+  if (!currentLocation.value) return
+  const label = currentLocation.value.address || '当前位置'
+  setOrigin(currentLocation.value, label)
   selectMode.value = 'dest'
 }
 
+const useCurrentAsDest = (): void => {
+  if (!currentLocation.value) return
+  const label = currentLocation.value.address || '当前位置'
+  setDest(currentLocation.value, label)
+}
+
+const toRad = (val: number) => (val * Math.PI) / 180
+const distanceMeters = (a: { lng: number; lat: number }, b: { lng: number; lat: number }) => {
+  const r = 6378137
+  const dLat = toRad(b.lat - a.lat)
+  const dLng = toRad(b.lng - a.lng)
+  const lat1 = toRad(a.lat)
+  const lat2 = toRad(b.lat)
+  const h =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.sin(dLng / 2) * Math.sin(dLng / 2) * Math.cos(lat1) * Math.cos(lat2)
+  return 2 * r * Math.asin(Math.sqrt(h))
+}
+
+const getRecentSuggestions = (keyword = '') => {
+  return recentLocations.value
+    .filter(it => !keyword || it.label.includes(keyword))
+    .map(it => ({
+      value: it.label,
+      name: it.label,
+      address: '',
+      lng: it.lng,
+      lat: it.lat
+    }))
+}
+
+const ensureAmapLoaded = async (): Promise<any | null> => {
+  const AMap = (window as any).AMap
+  if (AMap?.Autocomplete) return AMap
+  if (!amapReady) {
+    const envKey = import.meta.env.VITE_AMAP_KEY
+    const envSecurity = import.meta.env.VITE_AMAP_SECURITY
+    const config = envKey
+      ? { key: envKey, security: envSecurity }
+      : await request.get('/route/config').then((cfg: any) => {
+          const data = cfg?.data || cfg
+          return { key: data?.key || '', security: data?.securityJsCode || '' }
+        }).catch(() => ({ key: '', security: '' }))
+    if (!config.key) return null
+    ;(window as any)._AMapSecurityConfig = { securityJsCode: config.security || '' }
+    amapReady = AMapLoader.load({
+      key: config.key,
+      version: '2.0',
+      plugins: ['AMap.Autocomplete', 'AMap.Geocoder']
+    })
+  }
+  try {
+    return await amapReady
+  } catch {
+    return null
+  }
+}
+
+const ensureAutocomplete = async () => {
+  const AMap = await ensureAmapLoaded()
+  if (!AMap || !AMap.Autocomplete) return null
+  if (!amapAutocomplete) {
+    amapAutocomplete = new AMap.Autocomplete({ city: '全国' })
+  }
+  return amapAutocomplete
+}
+
+const fetchTipsFromAMap = async (keyword: string): Promise<any[]> => {
+  return new Promise((resolve) => {
+    void ensureAutocomplete().then((autocomplete) => {
+      if (!autocomplete) return resolve([])
+      autocomplete.search(keyword, (status: string, result: any) => {
+      if (status !== 'complete' || !Array.isArray(result?.tips)) return resolve([])
+      const list = result.tips
+        .map((it: any) => {
+          const lng = it?.location?.lng
+          const lat = it?.location?.lat
+          return {
+            value: it.name || it.address || '',
+            name: it.name,
+            address: it.address,
+            district: it.district,
+            lng,
+            lat
+          }
+        })
+        .filter((it: any) => it?.value)
+      resolve(list)
+      })
+    })
+  })
+}
+
+const geocodeByKeyword = (keyword: string): Promise<{ lng: number; lat: number } | null> => {
+  return new Promise((resolve) => {
+    void ensureAmapLoaded().then((AMap) => {
+      if (!AMap || !AMap.Geocoder) return resolve(null)
+      const geocoder = new AMap.Geocoder({ city: '全国' })
+      geocoder.getLocation(keyword, (status: string, result: any) => {
+        if (status !== 'complete' || !result?.geocodes?.length) return resolve(null)
+        const loc = result.geocodes[0].location
+        const lng = loc?.getLng?.() ?? loc?.lng
+        const lat = loc?.getLat?.() ?? loc?.lat
+        if (!isValidLngLat(lng, lat)) return resolve(null)
+        resolve({ lng: Number(lng), lat: Number(lat) })
+      })
+    })
+  })
+}
+
+const fetchTips = async (q: string, cb: any, loadingRef: { value: boolean }) => {
+  const keyword = q.trim()
+  if (!keyword || keyword.length < 2) {
+    cb(getRecentSuggestions())
+    return
+  }
+  const loc = currentLocation.value
+  const cacheKey = `${keyword}:${loc ? `${loc.lng.toFixed(3)},${loc.lat.toFixed(3)}` : 'noloc'}`
+  if (tipCache.has(cacheKey)) {
+    cb(tipCache.get(cacheKey) || [])
+    return
+  }
+  loadingRef.value = true
+  try {
+    const params: any = { keywords: keyword }
+    if (loc) {
+      params.lng = loc.lng
+      params.lat = loc.lat
+    }
+    const res: any = await request.get('/route/tips', { params })
+    let list = (res?.data || res || []).map((it: any) => {
+      const lng = Number(it.lng)
+      const lat = Number(it.lat)
+      return {
+        value: it.name || it.address || '',
+        name: it.name,
+        address: it.address,
+        district: it.district,
+        lng,
+        lat
+      }
+    })
+    list = list.filter((it: any) => isValidLngLat(it.lng, it.lat) || it.value)
+    if (list.length === 0) {
+      const fallback = await fetchTipsFromAMap(keyword)
+      list = fallback
+    }
+    const recentMatched = getRecentSuggestions(keyword)
+    list = [...recentMatched, ...list]
+    if (loc) {
+      list.sort((a: any, b: any) => {
+        if (!a.lng || !b.lng) return 0
+        return distanceMeters(a, loc) - distanceMeters(b, loc)
+      })
+    }
+    tipCache.set(cacheKey, list)
+    cb(list)
+  } catch {
+    const fallback = await fetchTipsFromAMap(keyword)
+    cb(fallback.length ? fallback : getRecentSuggestions(keyword))
+  } finally {
+    loadingRef.value = false
+  }
+}
+
+const queryOrigin = (q: string, cb: any) => {
+  if (originTimer) window.clearTimeout(originTimer)
+  originTimer = window.setTimeout(() => {
+    void fetchTips(q, cb, originLoading)
+  }, 300)
+}
+
+const queryDest = (q: string, cb: any) => {
+  if (destTimer) window.clearTimeout(destTimer)
+  destTimer = window.setTimeout(() => {
+    void fetchTips(q, cb, destLoading)
+  }, 300)
+}
+
+const onSelectOrigin = (it: any) => {
+  const label = `${it.name || it.value || ''} ${it.address || it.district || ''}`.trim()
+  if (isValidLngLat(it.lng, it.lat)) {
+    setOrigin({ lng: Number(it.lng), lat: Number(it.lat) }, label)
+    selectMode.value = 'dest'
+    return
+  }
+  void geocodeByKeyword(label).then((loc) => {
+    if (!loc) {
+      ElMessage.warning('未找到该位置的精确坐标')
+      return
+    }
+    setOrigin(loc, label)
+    selectMode.value = 'dest'
+  })
+}
+
 const onSelectDest = (it: any) => {
-  form.value.dest_lng = it.lng
-  form.value.dest_lat = it.lat
-  centerRef.value = { lng: it.lng, lat: it.lat }
-  search.value.dest = it.value
+  const label = `${it.name || it.value || ''} ${it.address || it.district || ''}`.trim()
+  if (isValidLngLat(it.lng, it.lat)) {
+    setDest({ lng: Number(it.lng), lat: Number(it.lat) }, label)
+    return
+  }
+  void geocodeByKeyword(label).then((loc) => {
+    if (!loc) {
+      ElMessage.warning('未找到该位置的精确坐标')
+      return
+    }
+    setDest(loc, label)
+  })
+}
+
+const applyPoiExample = (keyword: string): void => {
+  if (selectMode.value === 'origin') {
+    search.value.origin = keyword
+    originInputRef.value?.focus?.()
+    queryOrigin(keyword, () => {})
+  } else {
+    search.value.dest = keyword
+    destInputRef.value?.focus?.()
+    queryDest(keyword, () => {})
+  }
+}
+
+const schedulePreload = (): void => {
+  if (preloadTimer) window.clearTimeout(preloadTimer)
+  preloadTimer = window.setTimeout(() => {
+    void preloadRoute()
+  }, 600)
+}
+
+const preloadRoute = async (): Promise<void> => {
+  if (!form.value.origin_lat || !form.value.dest_lat) return
+  const key = buildRouteKey()
+  if (!key || preloading.value || preRouteCache.value?.key === key) return
+  preloading.value = true
+  try {
+    const result = await requestRoute()
+    preRouteCache.value = { key, result }
+  } catch {
+    // ignore
+  } finally {
+    preloading.value = false
+  }
 }
 
 const submit = async () => {
@@ -666,6 +1055,50 @@ const submit = async () => {
     submitting.value = false
   }
 }
+
+const loadMapConfig = async (): Promise<void> => {
+  try {
+    const res: any = await request.get('/route/config')
+    const data = res?.data || res
+    if (data?.coordType === 'wgs84' || data?.coordType === 'bd09' || data?.coordType === 'gcj02') {
+      coordType.value = data.coordType
+    }
+  } catch {
+    // ignore
+  }
+}
+
+const loadRecentLocations = (): void => {
+  try {
+    const raw = localStorage.getItem(RECENT_KEY)
+    recentLocations.value = raw ? JSON.parse(raw) : []
+  } catch {
+    recentLocations.value = []
+  }
+}
+
+const persistRecentLocations = (): void => {
+  try {
+    localStorage.setItem(RECENT_KEY, JSON.stringify(recentLocations.value))
+  } catch {
+    // ignore
+  }
+}
+
+const addRecentLocation = (label: string, lng: number, lat: number): void => {
+  const safeLabel = label?.trim()
+  if (!safeLabel || !lng || !lat) return
+  const key = `${lng.toFixed(6)},${lat.toFixed(6)}`
+  const list = recentLocations.value.filter(it => `${it.lng.toFixed(6)},${it.lat.toFixed(6)}` !== key)
+  list.unshift({ label: safeLabel, lng, lat, ts: Date.now() })
+  recentLocations.value = list.slice(0, 8)
+  persistRecentLocations()
+}
+
+onMounted(() => {
+  loadMapConfig()
+  loadRecentLocations()
+})
 
 const getTaskTypeText = (type: string): string => {
   const map: Record<string, string> = {
@@ -716,16 +1149,16 @@ const getWeatherTagType = (weather: string): string => {
 <style scoped lang="scss">
 .task-create {
   padding: 20px;
-  background: #f5f7fa;
+  background: transparent;
   min-height: calc(100vh - 60px);
 }
 
 .steps {
   margin-bottom: 24px;
-  background: white;
+  background: rgba(11, 24, 48, 0.9);
   padding: 24px;
   border-radius: 8px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.25);
 }
 
 .content-wrapper {
@@ -735,6 +1168,8 @@ const getWeatherTagType = (weather: string): string => {
 .step-card {
   border-radius: 12px;
   overflow: hidden;
+  background: linear-gradient(135deg, rgba(11, 24, 48, 0.9), rgba(8, 18, 36, 0.9));
+  border: 1px solid rgba(86, 211, 255, 0.18);
 }
 
 .card-header {
@@ -742,11 +1177,110 @@ const getWeatherTagType = (weather: string): string => {
   justify-content: space-between;
   align-items: center;
   font-weight: 600;
-  color: #333;
+  color: #e6f0ff;
 }
 
 .search-section {
   margin-bottom: 16px;
+}
+
+.locate-actions {
+  margin-top: 12px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.locate-hint {
+  margin-top: 6px;
+  color: #8fb3ff;
+  font-size: 12px;
+}
+
+.ride-card {
+  display: flex;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(11, 24, 48, 0.9), rgba(8, 18, 36, 0.9));
+  border: 1px solid rgba(86, 211, 255, 0.18);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.25);
+}
+.ride-line {
+  width: 18px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding-top: 6px;
+}
+.ride-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+.ride-dot.start {
+  background: #52c41a;
+  box-shadow: 0 0 8px rgba(82, 196, 26, 0.6);
+}
+.ride-dot.end {
+  background: #ff4d4f;
+  box-shadow: 0 0 8px rgba(255, 77, 79, 0.6);
+}
+.ride-rail {
+  flex: 1;
+  width: 2px;
+  background: linear-gradient(180deg, rgba(86, 211, 255, 0.2), rgba(86, 211, 255, 0.6));
+  border-radius: 2px;
+}
+.ride-inputs {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.ride-input :deep(.el-input__wrapper) {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(86, 211, 255, 0.2);
+  box-shadow: none;
+}
+
+.tip-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tip-name {
+  color: #1f2d3d;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.tip-address {
+  color: #90a4b8;
+  font-size: 12px;
+}
+
+.poi-examples {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  color: #8fb3ff;
+  font-size: 12px;
+}
+
+.poi-label {
+  color: #8fb3ff;
+}
+
+.poi-tag {
+  cursor: pointer;
+  border: 1px solid rgba(86, 211, 255, 0.25);
+  background: rgba(86, 211, 255, 0.08);
+  color: #cfe6ff;
 }
 
 .map-section {
@@ -754,7 +1288,7 @@ const getWeatherTagType = (weather: string): string => {
   border-radius: 8px;
   overflow: hidden;
   margin-bottom: 16px;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
 }
 
 .coordinate-info {
@@ -762,7 +1296,7 @@ const getWeatherTagType = (weather: string): string => {
 }
 
 .text-placeholder {
-  color: #999;
+  color: #9bb3d3;
   font-style: italic;
 }
 
