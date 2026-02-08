@@ -3,10 +3,15 @@ import { onMounted, onUnmounted } from "vue";
 import AMapLoader from "@amap/amap-jsapi-loader";
 
 let map = null;
+const AMAP_KEY = "bcf90d031736c84e396e0d6732c01cae";
+const AMAP_SECURITY = "a2bd6dc7e8ed3d039ff6105cbf9147d9";
 
 onMounted(() => {
+  window._AMapSecurityConfig = {
+    securityJsCode: AMAP_SECURITY,
+  };
   AMapLoader.load({
-    key: "", // 申请好的Web端开发者Key，首次调用 load 时必填
+    key: AMAP_KEY, // 申请好的Web端开发者Key，首次调用 load 时必填
     version: "2.0", // 指定要加载的 JSAPI 的版本，缺省时默认为 1.4.15
     plugins: [], // 需要使用的的插件列表，如比例尺'AMap.Scale'等
   })

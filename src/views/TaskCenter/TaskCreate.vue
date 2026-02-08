@@ -105,12 +105,17 @@
                 :trigger-on-focus="true"
                 placeholder="输入起点，如：市立医院"
                 @select="onSelectOrigin"
+                @keyup.enter.native="onEnterOrigin"
+                @blur="onBlurOrigin"
                 clearable
                 style="width: 100%"
                 class="ride-input"
               >
                 <template #prefix>
                   <el-icon><Location /></el-icon>
+                </template>
+                <template #suffix>
+                  <el-icon v-if="originResolving"><Loading /></el-icon>
                 </template>
                 <template #default="{ item }">
                   <div class="tip-item">
@@ -127,12 +132,17 @@
                 :trigger-on-focus="true"
                 placeholder="输入终点，如：中心医院"
                 @select="onSelectDest"
+                @keyup.enter.native="onEnterDest"
+                @blur="onBlurDest"
                 clearable
                 style="width: 100%"
                 class="ride-input"
               >
                 <template #prefix>
                   <el-icon><LocationFilled /></el-icon>
+                </template>
+                <template #suffix>
+                  <el-icon v-if="destResolving"><Loading /></el-icon>
                 </template>
                 <template #default="{ item }">
                   <div class="tip-item">
@@ -160,10 +170,20 @@
               <el-icon><Location /></el-icon>
               定位当前位置
             </el-button>
-            <el-button size="small" type="primary" @click="useCurrentAsOrigin" :disabled="!currentLocation">
+            <el-button
+              size="small"
+              type="primary"
+              @click="useCurrentAsOrigin"
+              :disabled="!currentLocation"
+            >
               当前位置设为起点
             </el-button>
-            <el-button size="small" type="success" @click="useCurrentAsDest" :disabled="!currentLocation">
+            <el-button
+              size="small"
+              type="success"
+              @click="useCurrentAsDest"
+              :disabled="!currentLocation"
+            >
               当前位置设为终点
             </el-button>
           </div>
@@ -260,20 +280,21 @@
                 <MapContainer
                   :markers="routeMarkers"
                   :route="routePoints"
+                  :center="routeMapCenter"
                   :show-toolbar="true"
                   :coord-type="coordType"
                 />
                 <div class="map-legend">
                   <div class="legend-item">
-                    <div class="legend-color" style="background: #1890ff;"></div>
+                    <div class="legend-color" style="background: #1890ff"></div>
                     <span>飞行路径（沿道路正上方）</span>
                   </div>
                   <div class="legend-item">
-                    <div class="legend-color" style="background: #52c41a;"></div>
+                    <div class="legend-color" style="background: #52c41a"></div>
                     <span>起点</span>
                   </div>
                   <div class="legend-item">
-                    <div class="legend-color" style="background: #ff4d4f;"></div>
+                    <div class="legend-color" style="background: #ff4d4f"></div>
                     <span>终点</span>
                   </div>
                 </div>
@@ -282,23 +303,31 @@
             <el-col :span="8">
               <div class="route-info">
                 <el-descriptions :column="1" border>
-                <el-descriptions-item label="路径距离">
-                  <span class="info-value">{{ (routeResult.distance ?? 0).toFixed(2) }} 公里</span>
+                  <el-descriptions-item label="路径距离">
+                    <span class="info-value"
+                      >{{ (routeResult.distance ?? 0).toFixed(2) }} 公里</span
+                    >
                   </el-descriptions-item>
                   <el-descriptions-item label="预计时长">
-                  <span class="info-value">{{ formatDuration(routeResult.duration ?? 0) }}</span>
+                    <span class="info-value">{{ formatDuration(routeResult.duration ?? 0) }}</span>
                   </el-descriptions-item>
                   <el-descriptions-item label="路径点数">
                     <span class="info-value">{{ routeResult.points.length }} 个</span>
                   </el-descriptions-item>
-                  <el-descriptions-item label="风险系数" v-if="routeResult.riskFactor !== undefined">
+                  <el-descriptions-item
+                    label="风险系数"
+                    v-if="routeResult.riskFactor !== undefined"
+                  >
                     <div class="risk-info">
                       <el-progress
                         :percentage="Math.round(routeResult.riskFactor * 100)"
                         :color="getRiskColor(routeResult.riskFactor)"
-                        :format="(val) => `${(val / 100).toFixed(2)}`"
+                        :format="formatRiskValue"
                       />
-                      <span class="risk-text" :style="{ color: getRiskColor(routeResult.riskFactor) }">
+                      <span
+                        class="risk-text"
+                        :style="{ color: getRiskColor(routeResult.riskFactor) }"
+                      >
                         {{ getRiskText(routeResult.riskFactor) }}
                       </span>
                     </div>
@@ -308,18 +337,26 @@
                       {{ routeResult.weatherCondition }}
                     </el-tag>
                   </el-descriptions-item>
-                  <el-descriptions-item label="预计电量消耗" v-if="routeResult.estimatedBatteryConsumption">
+                  <el-descriptions-item
+                    label="预计电量消耗"
+                    v-if="routeResult.estimatedBatteryConsumption"
+                  >
                     <div class="battery-info">
                       <el-progress
                         :percentage="routeResult.estimatedBatteryConsumption"
                         :color="getBatteryColor(routeResult.estimatedBatteryConsumption)"
                       />
-                      <span class="info-value">{{ routeResult.estimatedBatteryConsumption.toFixed(1) }}%</span>
+                      <span class="info-value"
+                        >{{ routeResult.estimatedBatteryConsumption.toFixed(1) }}%</span
+                      >
                     </div>
                   </el-descriptions-item>
                 </el-descriptions>
 
-                <div v-if="routeResult.warnings && routeResult.warnings.length > 0" class="warnings">
+                <div
+                  v-if="routeResult.warnings && routeResult.warnings.length > 0"
+                  class="warnings"
+                >
                   <el-divider>路径警告</el-divider>
                   <el-alert
                     v-for="(warning, index) in routeResult.warnings"
@@ -361,7 +398,9 @@
                   {{ form.remarks || '无' }}
                 </el-descriptions-item>
                 <el-descriptions-item label="起点">
-                  {{ search.origin || `${form.origin_lng.toFixed(4)}, ${form.origin_lat.toFixed(4)}` }}
+                  {{
+                    search.origin || `${form.origin_lng.toFixed(4)}, ${form.origin_lat.toFixed(4)}`
+                  }}
                 </el-descriptions-item>
                 <el-descriptions-item label="终点">
                   {{ search.dest || `${form.dest_lng.toFixed(4)}, ${form.dest_lat.toFixed(4)}` }}
@@ -389,20 +428,10 @@
       >
         下一步
       </el-button>
-      <el-button
-        v-else-if="step === 2"
-        type="primary"
-        @click="handleNext"
-        :disabled="!routeResult"
-      >
+      <el-button v-else-if="step === 2" type="primary" @click="handleNext" :disabled="!routeResult">
         下一步
       </el-button>
-      <el-button
-        v-else-if="step === 3"
-        type="primary"
-        @click="submit"
-        :loading="submitting"
-      >
+      <el-button v-else-if="step === 3" type="primary" @click="submit" :loading="submitting">
         确认提交
       </el-button>
       <el-button v-else type="primary" @click="handleNext">下一步</el-button>
@@ -424,7 +453,11 @@ import { Location, LocationFilled, Refresh, Loading } from '@element-plus/icons-
 import AMapLoader from '@amap/amap-jsapi-loader'
 import MapContainer from '@/components/MapContainer.vue'
 import { createTask } from '@/api/task'
-import { calculateRoute as calculateRouteAPI, type RouteResult, type RouteOptions } from '@/api/route'
+import {
+  calculateRoute as calculateRouteAPI,
+  type RouteResult,
+  type RouteOptions,
+} from '@/api/route'
 import request from '@/utils/request'
 import type { DroneMarker, RoutePoint } from '@/types/drone'
 
@@ -447,7 +480,10 @@ const tipCache = new Map<string, any[]>()
 let originTimer: number | null = null
 let destTimer: number | null = null
 let amapAutocomplete: any = null
+let amapPlaceSearch: any = null
 let amapReady: Promise<any> | null = null
+const FALLBACK_AMAP_KEY = 'bcf90d031736c84e396e0d6732c01cae'
+const FALLBACK_AMAP_SECURITY = 'a2bd6dc7e8ed3d039ff6105cbf9147d9'
 const preRouteCache = ref<{ key: string; result: RouteResult } | null>(null)
 const preloading = ref(false)
 let preloadTimer: number | null = null
@@ -456,6 +492,20 @@ const recentLocations = ref<Array<{ label: string; lng: number; lat: number; ts:
 const poiExamples = ['中南大学', '湘雅医院', '长沙火车站', '五一广场', '省人民医院']
 const originInputRef = ref()
 const destInputRef = ref()
+const lastResolved = ref({ origin: '', dest: '' })
+const originSuggestions = ref<any[]>([])
+const destSuggestions = ref<any[]>([])
+const resolvedAliases = ref<{ origin: string[]; dest: string[] }>({ origin: [], dest: [] })
+const originResolving = ref(false)
+const destResolving = ref(false)
+const DEBUG_GEO = true
+
+const debugGeo = (scope: string, data?: any) => {
+  if (!DEBUG_GEO) return
+  try {
+    console.log(`[geo][${scope}]`, data ?? '')
+  } catch {}
+}
 
 const form = ref({
   type: 'supplies_transport',
@@ -479,7 +529,7 @@ const centerRef = ref<any>(undefined)
 
 const rules = {
   type: [{ required: true, message: '请选择任务类型', trigger: 'change' }],
-  priority: [{ required: true, message: '请选择优先级', trigger: 'change' }]
+  priority: [{ required: true, message: '请选择优先级', trigger: 'change' }],
 }
 
 const isSamePoint = (a: { lng: number; lat: number }, b: { lng: number; lat: number }): boolean => {
@@ -495,7 +545,7 @@ const markers = computed(() => {
       lat: form.value.origin_lat,
       lng: form.value.origin_lng,
       label: '起点',
-      status: 'normal'
+      status: 'normal',
     })
   }
   if (form.value.dest_lat) {
@@ -504,12 +554,14 @@ const markers = computed(() => {
       lat: form.value.dest_lat,
       lng: form.value.dest_lng,
       label: '终点',
-      status: 'warning'
+      status: 'warning',
     })
   }
   if (currentLocation.value) {
     const current = { lng: currentLocation.value.lng, lat: currentLocation.value.lat }
-    const origin = form.value.origin_lat ? { lng: form.value.origin_lng, lat: form.value.origin_lat } : null
+    const origin = form.value.origin_lat
+      ? { lng: form.value.origin_lng, lat: form.value.origin_lat }
+      : null
     const dest = form.value.dest_lat ? { lng: form.value.dest_lng, lat: form.value.dest_lat } : null
     const sameAsOrigin = origin && isSamePoint(current, origin)
     const sameAsDest = dest && isSamePoint(current, dest)
@@ -519,7 +571,7 @@ const markers = computed(() => {
         lat: current.lat,
         lng: current.lng,
         label: '当前位置',
-        status: 'flying'
+        status: 'flying',
       })
     }
   }
@@ -529,10 +581,10 @@ const markers = computed(() => {
 // 路径预览（步骤2显示）
 const previewRoute = computed<RoutePoint[]>(() => {
   if (form.value.origin_lat && form.value.dest_lat && routeResult.value) {
-    return routeResult.value.points.map(p => ({
+    return routeResult.value.points.map((p) => ({
       lng: p.lng,
       lat: p.lat,
-      altitude: p.altitude
+      altitude: p.altitude,
     }))
   }
   return []
@@ -541,10 +593,10 @@ const previewRoute = computed<RoutePoint[]>(() => {
 // 路径点（步骤3显示）
 const routePoints = computed<RoutePoint[]>(() => {
   if (routeResult.value) {
-    return routeResult.value.points.map(p => ({
+    return routeResult.value.points.map((p) => ({
       lng: p.lng,
       lat: p.lat,
-      altitude: p.altitude
+      altitude: p.altitude,
     }))
   }
   return []
@@ -559,7 +611,7 @@ const routeMarkers = computed(() => {
       lat: form.value.origin_lat,
       lng: form.value.origin_lng,
       label: '起点',
-      status: 'normal'
+      status: 'normal',
     })
   }
   if (form.value.dest_lat) {
@@ -568,15 +620,32 @@ const routeMarkers = computed(() => {
       lat: form.value.dest_lat,
       lng: form.value.dest_lng,
       label: '终点',
-      status: 'warning'
+      status: 'warning',
     })
   }
   return list
 })
 
+// 路径预览地图中心（起终点中点，避免默认定位到上海）
+const routeMapCenter = computed(() => {
+  if (form.value.origin_lat && form.value.dest_lat) {
+    return {
+      lng: (form.value.origin_lng + form.value.dest_lng) / 2,
+      lat: (form.value.origin_lat + form.value.dest_lat) / 2,
+    }
+  }
+  return undefined
+})
+
 // 监听起点终点变化，自动计算路径（步骤2）并预加载（步骤1）
 watch(
-  () => [form.value.origin_lat, form.value.origin_lng, form.value.dest_lat, form.value.dest_lng, step.value],
+  () => [
+    form.value.origin_lat,
+    form.value.origin_lng,
+    form.value.dest_lat,
+    form.value.dest_lng,
+    step.value,
+  ],
   ([originLat, originLng, destLat, destLng, currentStep]) => {
     if (!originLat || !originLng || !destLat || !destLng) return
     if (currentStep === 2 && !routeLoading.value) {
@@ -585,7 +654,58 @@ watch(
       schedulePreload()
     }
   },
-  { deep: true }
+  { deep: true },
+)
+
+watch(
+  () => search.value.origin,
+  (val: string) => {
+    if (originResolving.value) return
+    const clean = (val || '').trim()
+    const aliases = resolvedAliases.value.origin || []
+    if (!clean) {
+      form.value.origin_lat = 0
+      form.value.origin_lng = 0
+      return
+    }
+    if (aliases.length > 0 && isAliasMatch(clean, aliases)) return
+    if (originSuggestions.value.length > 0) {
+      const matched = originSuggestions.value.some((it: any) => {
+        const label = `${it.name || it.value || ''} ${it.address || it.district || ''}`.trim()
+        return isAliasMatch(clean, [label, it.name, it.value].filter(Boolean).map(String))
+      })
+      if (matched) return
+    }
+    // 仅在失焦/回车时做最终清空，避免输入过程误清除坐标
+  },
+)
+
+watch(
+  () => search.value.dest,
+  (val: string) => {
+    if (destResolving.value) return
+    const clean = (val || '').trim()
+    const aliases = resolvedAliases.value.dest || []
+    if (!clean) {
+      debugGeo('dest.clear.empty', { input: val })
+      form.value.dest_lat = 0
+      form.value.dest_lng = 0
+      return
+    }
+    if (lastResolved.value.dest === clean && form.value.dest_lat && form.value.dest_lng) {
+      return
+    }
+    if (aliases.length > 0 && isAliasMatch(clean, aliases)) return
+    if (destSuggestions.value.length > 0) {
+      const matched = destSuggestions.value.some((it: any) => {
+        const label = `${it.name || it.value || ''} ${it.address || it.district || ''}`.trim()
+        return isAliasMatch(clean, [label, it.name, it.value].filter(Boolean).map(String))
+      })
+      if (matched) return
+    }
+    debugGeo('dest.pending.mismatch', { input: clean, aliases })
+    // 仅在失焦/回车时做最终清空，避免输入过程误清除坐标
+  },
 )
 
 watch(
@@ -595,7 +715,7 @@ watch(
     if (form.value.origin_lat && form.value.dest_lat) {
       schedulePreload()
     }
-  }
+  },
 )
 
 const next = () => {
@@ -641,7 +761,7 @@ const buildRouteKey = (): string => {
     form.value.dest_lat.toFixed(6),
     routeStrategy.value,
     form.value.avoidNoFlyZones ? '1' : '0',
-    form.value.considerWeather ? '1' : '0'
+    form.value.considerWeather ? '1' : '0',
   ].join('|')
 }
 
@@ -649,18 +769,20 @@ const requestRoute = async (): Promise<RouteResult> => {
   const options: RouteOptions = {
     avoidNoFlyZones: form.value.avoidNoFlyZones,
     considerWeather: form.value.considerWeather,
-    optimizeStrategy: routeStrategy.value
+    optimizeStrategy: routeStrategy.value,
   }
   return calculateRouteAPI({
     originLng: form.value.origin_lng,
     originLat: form.value.origin_lat,
     destLng: form.value.dest_lng,
     destLat: form.value.dest_lat,
-    options
+    options,
   })
 }
 
-const calculateRoute = async (opts: { silent?: boolean; usePreload?: boolean } = {}): Promise<void> => {
+const calculateRoute = async (
+  opts: { silent?: boolean; usePreload?: boolean } = {},
+): Promise<void> => {
   if (!form.value.origin_lat || !form.value.dest_lat) {
     if (!opts.silent) {
       ElMessage.warning('请先选择起点和终点')
@@ -752,20 +874,56 @@ const isValidLngLat = (lng?: number, lat?: number): boolean => {
   return true
 }
 
+const normalizeLngLat = (p: { lng: number; lat: number }) => {
+  const lng = Number(p?.lng)
+  const lat = Number(p?.lat)
+  if (!isValidLngLat(lng, lat)) return null
+  return { lng, lat }
+}
+
 const setOrigin = (p: { lng: number; lat: number }, label?: string): void => {
-  form.value.origin_lng = p.lng
-  form.value.origin_lat = p.lat
-  centerRef.value = { lng: p.lng, lat: p.lat }
-  search.value.origin = label || formatPoint(p)
-  addRecentLocation(label || formatPoint(p), p.lng, p.lat)
+  const normalized = normalizeLngLat(p)
+  if (!normalized) {
+    debugGeo('setOrigin.invalid', p)
+    return
+  }
+  const resolvedLabel = label || formatPoint(normalized)
+  lastResolved.value.origin = resolvedLabel
+  resolvedAliases.value.origin = Array.from(
+    new Set(
+      [...(resolvedAliases.value.origin || []), resolvedLabel]
+        .filter(Boolean)
+        .map((v) => String(v).trim()),
+    ),
+  )
+  form.value.origin_lng = normalized.lng
+  form.value.origin_lat = normalized.lat
+  centerRef.value = { lng: normalized.lng, lat: normalized.lat }
+  search.value.origin = resolvedLabel
+  addRecentLocation(resolvedLabel, normalized.lng, normalized.lat)
 }
 
 const setDest = (p: { lng: number; lat: number }, label?: string): void => {
-  form.value.dest_lng = p.lng
-  form.value.dest_lat = p.lat
-  centerRef.value = { lng: p.lng, lat: p.lat }
-  search.value.dest = label || formatPoint(p)
-  addRecentLocation(label || formatPoint(p), p.lng, p.lat)
+  const normalized = normalizeLngLat(p)
+  if (!normalized) {
+    debugGeo('setDest.invalid', p)
+    return
+  }
+  const resolvedLabel = label || formatPoint(normalized)
+  lastResolved.value.dest = resolvedLabel
+  resolvedAliases.value.dest = Array.from(
+    new Set(
+      [...(resolvedAliases.value.dest || []), resolvedLabel]
+        .filter(Boolean)
+        .map((v) => String(v).trim()),
+    ),
+  )
+  form.value.dest_lng = normalized.lng
+  form.value.dest_lat = normalized.lat
+  centerRef.value = { lng: normalized.lng, lat: normalized.lat }
+  search.value.dest = resolvedLabel
+  debugGeo('setDest', { label: resolvedLabel, lng: normalized.lng, lat: normalized.lat })
+  addRecentLocation(resolvedLabel, normalized.lng, normalized.lat)
 }
 
 const useCurrentAsOrigin = (): void => {
@@ -796,34 +954,41 @@ const distanceMeters = (a: { lng: number; lat: number }, b: { lng: number; lat: 
 
 const getRecentSuggestions = (keyword = '') => {
   return recentLocations.value
-    .filter(it => !keyword || it.label.includes(keyword))
-    .map(it => ({
+    .filter((it) => !keyword || it.label.includes(keyword))
+    .map((it) => ({
       value: it.label,
       name: it.label,
       address: '',
       lng: it.lng,
-      lat: it.lat
+      lat: it.lat,
     }))
 }
 
 const ensureAmapLoaded = async (): Promise<any | null> => {
   const AMap = (window as any).AMap
-  if (AMap?.Autocomplete) return AMap
+  if (AMap?.AutoComplete || AMap?.Autocomplete) return AMap
   if (!amapReady) {
     const envKey = import.meta.env.VITE_AMAP_KEY
     const envSecurity = import.meta.env.VITE_AMAP_SECURITY
     const config = envKey
       ? { key: envKey, security: envSecurity }
-      : await request.get('/route/config').then((cfg: any) => {
-          const data = cfg?.data || cfg
-          return { key: data?.key || '', security: data?.securityJsCode || '' }
-        }).catch(() => ({ key: '', security: '' }))
+      : await request
+          .get('/route/config')
+          .then((cfg: any) => {
+            const data = cfg?.data || cfg
+            return { key: data?.key || '', security: data?.securityJsCode || '' }
+          })
+          .catch(() => ({ key: '', security: '' }))
+    if (!config.key) {
+      config.key = FALLBACK_AMAP_KEY
+      config.security = FALLBACK_AMAP_SECURITY
+    }
     if (!config.key) return null
     ;(window as any)._AMapSecurityConfig = { securityJsCode: config.security || '' }
     amapReady = AMapLoader.load({
       key: config.key,
       version: '2.0',
-      plugins: ['AMap.Autocomplete', 'AMap.Geocoder']
+      plugins: ['AMap.AutoComplete', 'AMap.Autocomplete', 'AMap.PlaceSearch', 'AMap.Geocoder'],
     })
   }
   try {
@@ -835,11 +1000,21 @@ const ensureAmapLoaded = async (): Promise<any | null> => {
 
 const ensureAutocomplete = async () => {
   const AMap = await ensureAmapLoaded()
-  if (!AMap || !AMap.Autocomplete) return null
+  const AutoCompleteCtor = AMap?.AutoComplete || AMap?.Autocomplete
+  if (!AutoCompleteCtor) return null
   if (!amapAutocomplete) {
-    amapAutocomplete = new AMap.Autocomplete({ city: '全国' })
+    amapAutocomplete = new AutoCompleteCtor({ city: '全国' })
   }
   return amapAutocomplete
+}
+
+const ensurePlaceSearch = async (): Promise<{ AMap: any; placeSearch: any } | null> => {
+  const AMap = await ensureAmapLoaded()
+  if (!AMap || !AMap.PlaceSearch) return null
+  if (!amapPlaceSearch) {
+    amapPlaceSearch = new AMap.PlaceSearch({ city: '全国', citylimit: false, pageSize: 10 })
+  }
+  return { AMap, placeSearch: amapPlaceSearch }
 }
 
 const fetchTipsFromAMap = async (keyword: string): Promise<any[]> => {
@@ -847,22 +1022,24 @@ const fetchTipsFromAMap = async (keyword: string): Promise<any[]> => {
     void ensureAutocomplete().then((autocomplete) => {
       if (!autocomplete) return resolve([])
       autocomplete.search(keyword, (status: string, result: any) => {
-      if (status !== 'complete' || !Array.isArray(result?.tips)) return resolve([])
-      const list = result.tips
-        .map((it: any) => {
-          const lng = it?.location?.lng
-          const lat = it?.location?.lat
-          return {
-            value: it.name || it.address || '',
-            name: it.name,
-            address: it.address,
-            district: it.district,
-            lng,
-            lat
-          }
-        })
-        .filter((it: any) => it?.value)
-      resolve(list)
+        if (status !== 'complete' || !Array.isArray(result?.tips)) return resolve([])
+        const list = result.tips
+          .map((it: any) => {
+            const lng = it?.location?.lng
+            const lat = it?.location?.lat
+            return {
+              value: it.name || it.address || '',
+              name: it.name,
+              address: it.address,
+              district: it.district,
+              id: it.id || it.poiid || it.poid,
+              adcode: it.adcode,
+              lng,
+              lat,
+            }
+          })
+          .filter((it: any) => it?.value)
+        resolve(list)
       })
     })
   })
@@ -885,45 +1062,65 @@ const geocodeByKeyword = (keyword: string): Promise<{ lng: number; lat: number }
   })
 }
 
-const fetchTips = async (q: string, cb: any, loadingRef: { value: boolean }) => {
+const placeSearchByKeyword = (keyword: string): Promise<{ lng: number; lat: number } | null> => {
+  return new Promise((resolve) => {
+    void ensurePlaceSearch().then((ctx) => {
+      if (!ctx) return resolve(null)
+      const { AMap, placeSearch } = ctx
+      const handleResult = (status: string, result: any) => {
+        if (status !== 'complete' || !result?.poiList?.pois?.length) return resolve(null)
+        const poi = result.poiList.pois[0]
+        const loc = poi?.location
+        const lng = loc?.lng ?? loc?.getLng?.()
+        const lat = loc?.lat ?? loc?.getLat?.()
+        if (!isValidLngLat(lng, lat)) return resolve(null)
+        resolve({ lng: Number(lng), lat: Number(lat) })
+      }
+      const isAddressLike = /[0-9]|省|市|区|县|镇|乡|路|街|道|号|村|楼|园|栋|座|校|院/.test(keyword)
+      if (currentLocation.value && !isAddressLike && keyword.length <= 4) {
+        const center = new AMap.LngLat(currentLocation.value.lng, currentLocation.value.lat)
+        placeSearch.searchNearBy(keyword, center, 50000, handleResult)
+        return
+      }
+      placeSearch.search(keyword, handleResult)
+    })
+  })
+}
+
+const fetchTipsList = async (q: string, loadingRef: { value: boolean }) => {
   const keyword = q.trim()
-  if (!keyword || keyword.length < 2) {
-    cb(getRecentSuggestions())
-    return
+  if (!keyword) {
+    return []
   }
   const loc = currentLocation.value
   const cacheKey = `${keyword}:${loc ? `${loc.lng.toFixed(3)},${loc.lat.toFixed(3)}` : 'noloc'}`
   if (tipCache.has(cacheKey)) {
-    cb(tipCache.get(cacheKey) || [])
-    return
+    return tipCache.get(cacheKey) || []
   }
   loadingRef.value = true
   try {
-    const params: any = { keywords: keyword }
-    if (loc) {
-      params.lng = loc.lng
-      params.lat = loc.lat
-    }
-    const res: any = await request.get('/route/tips', { params })
-    let list = (res?.data || res || []).map((it: any) => {
-      const lng = Number(it.lng)
-      const lat = Number(it.lat)
-      return {
-        value: it.name || it.address || '',
-        name: it.name,
-        address: it.address,
-        district: it.district,
-        lng,
-        lat
-      }
-    })
-    list = list.filter((it: any) => isValidLngLat(it.lng, it.lat) || it.value)
+    let list = await fetchTipsFromAMap(keyword)
     if (list.length === 0) {
-      const fallback = await fetchTipsFromAMap(keyword)
-      list = fallback
+      const params: any = { keywords: keyword }
+      if (loc) {
+        params.lng = loc.lng
+        params.lat = loc.lat
+      }
+      const res: any = await request.get('/route/tips', { params })
+      list = (res?.data || res || []).map((it: any) => {
+        const lng = Number(it.lng)
+        const lat = Number(it.lat)
+        return {
+          value: it.name || it.address || '',
+          name: it.name,
+          address: it.address,
+          district: it.district,
+          lng,
+          lat,
+        }
+      })
+      list = list.filter((it: any) => isValidLngLat(it.lng, it.lat) || it.value)
     }
-    const recentMatched = getRecentSuggestions(keyword)
-    list = [...recentMatched, ...list]
     if (loc) {
       list.sort((a: any, b: any) => {
         if (!a.lng || !b.lng) return 0
@@ -931,59 +1128,288 @@ const fetchTips = async (q: string, cb: any, loadingRef: { value: boolean }) => 
       })
     }
     tipCache.set(cacheKey, list)
-    cb(list)
+    return list
   } catch {
     const fallback = await fetchTipsFromAMap(keyword)
-    cb(fallback.length ? fallback : getRecentSuggestions(keyword))
+    return fallback
   } finally {
     loadingRef.value = false
+  }
+}
+
+const resolveKeyword = async (keyword: string): Promise<{ lng: number; lat: number } | null> => {
+  const clean = keyword.trim()
+  if (!clean) return null
+  const loc = await placeSearchByKeyword(clean)
+  if (loc) return loc
+  return await geocodeByKeyword(clean)
+}
+
+const normalizeText = (val?: string): string => {
+  return String(val || '')
+    .toLowerCase()
+    .replace(/[\s\-_,，。()（）【】\[\]、]/g, '')
+}
+
+const isAliasMatch = (input: string, aliases: string[]) => {
+  const key = normalizeText(input)
+  if (!key) return false
+  return aliases.some((alias) => {
+    const aliasKey = normalizeText(alias)
+    if (!aliasKey) return false
+    return aliasKey === key || aliasKey.includes(key) || key.includes(aliasKey)
+  })
+}
+
+const resolveTipLocation = async (tip: any, fallbackKeyword: string) => {
+  debugGeo('resolveTipLocation.start', { tip, fallbackKeyword })
+  if (isValidLngLat(tip?.lng, tip?.lat)) {
+    debugGeo('resolveTipLocation.hitTipCoord', { lng: tip.lng, lat: tip.lat })
+    return { lng: Number(tip.lng), lat: Number(tip.lat) }
+  }
+  if (tip?.id) {
+    const ctx = await ensurePlaceSearch()
+    if (ctx?.placeSearch?.getDetails) {
+      return await new Promise<{ lng: number; lat: number } | null>((resolve) => {
+        ctx.placeSearch.getDetails(tip.id, (status: string, result: any) => {
+          debugGeo('resolveTipLocation.getDetails', { status, result })
+          if (status !== 'complete') return resolve(null)
+          const poi = result?.poiList?.pois?.[0]
+          const loc = poi?.location
+          const lng = loc?.lng ?? loc?.getLng?.()
+          const lat = loc?.lat ?? loc?.getLat?.()
+          if (!isValidLngLat(lng, lat)) return resolve(null)
+          resolve({ lng: Number(lng), lat: Number(lat) })
+        })
+      })
+    }
+  }
+  const loc = await resolveKeyword(fallbackKeyword)
+  debugGeo('resolveTipLocation.fallback', loc)
+  return loc
+}
+
+const resolveFromSuggestions = async (type: 'origin' | 'dest', keyword?: string) => {
+  const clean = (keyword || '').trim()
+  if (!clean) return
+  if (type === 'origin' && form.value.origin_lat && form.value.origin_lng) {
+    const aliases = resolvedAliases.value.origin || []
+    if (isAliasMatch(clean, aliases)) return
+  }
+  if (type === 'dest' && form.value.dest_lat && form.value.dest_lng) {
+    const aliases = resolvedAliases.value.dest || []
+    if (isAliasMatch(clean, aliases)) return
+  }
+  if (
+    type === 'origin' &&
+    lastResolved.value.origin === clean &&
+    form.value.origin_lat &&
+    form.value.origin_lng
+  ) {
+    return
+  }
+  if (
+    type === 'dest' &&
+    lastResolved.value.dest === clean &&
+    form.value.dest_lat &&
+    form.value.dest_lng
+  ) {
+    return
+  }
+  const loadingRef = type === 'origin' ? originLoading : destLoading
+  const list = await fetchTipsList(clean, loadingRef)
+  if (type === 'origin') {
+    originSuggestions.value = list
+  } else {
+    destSuggestions.value = list
+  }
+  const cleanKey = normalizeText(clean)
+  const match = list.find((it: any) => {
+    const label = `${it.name || it.value || ''} ${it.address || it.district || ''}`.trim()
+    const labelKey = normalizeText(label)
+    const nameKey = normalizeText(it.name || it.value)
+    return (
+      labelKey === cleanKey ||
+      nameKey === cleanKey ||
+      labelKey.includes(cleanKey) ||
+      cleanKey.includes(labelKey)
+    )
+  })
+  if (match) {
+    const label =
+      `${match.name || match.value || ''} ${match.address || match.district || ''}`.trim()
+    const loc = await resolveTipLocation(match, label || clean)
+    if (loc) {
+      if (type === 'origin') {
+        setOrigin(loc, label || clean)
+        selectMode.value = 'dest'
+      } else {
+        setDest(loc, label || clean)
+      }
+      return
+    }
+  }
+  console.debug('resolveFromSuggestions: no matching tip resolved, attempting fallback geocode', {
+    type,
+    clean,
+  })
+  // 没有从提示中解析到坐标，尝试用关键字进行一次地理编码回退（提高用户直接输入地址的容错）
+  try {
+    const fallbackLoc = await resolveKeyword(clean)
+    if (fallbackLoc) {
+      if (type === 'origin') {
+        setOrigin(fallbackLoc, clean)
+        selectMode.value = 'dest'
+      } else {
+        setDest(fallbackLoc, clean)
+      }
+      return
+    }
+  } catch (e) {
+    // ignore fallback error
+  }
+
+  ElMessage.warning('请从提示列表选择详细地址以确认坐标')
+  if (type === 'origin') {
+    form.value.origin_lat = 0
+    form.value.origin_lng = 0
+  } else {
+    form.value.dest_lat = 0
+    form.value.dest_lng = 0
   }
 }
 
 const queryOrigin = (q: string, cb: any) => {
   if (originTimer) window.clearTimeout(originTimer)
   originTimer = window.setTimeout(() => {
-    void fetchTips(q, cb, originLoading)
+    void fetchTipsList(q, originLoading).then((list) => {
+      originSuggestions.value = list
+      cb(list)
+    })
   }, 300)
 }
 
 const queryDest = (q: string, cb: any) => {
   if (destTimer) window.clearTimeout(destTimer)
   destTimer = window.setTimeout(() => {
-    void fetchTips(q, cb, destLoading)
+    void fetchTipsList(q, destLoading).then((list) => {
+      destSuggestions.value = list
+      cb(list)
+    })
   }, 300)
 }
 
 const onSelectOrigin = (it: any) => {
   const label = `${it.name || it.value || ''} ${it.address || it.district || ''}`.trim()
-  if (isValidLngLat(it.lng, it.lat)) {
-    setOrigin({ lng: Number(it.lng), lat: Number(it.lat) }, label)
-    selectMode.value = 'dest'
-    return
-  }
-  void geocodeByKeyword(label).then((loc) => {
-    if (!loc) {
-      ElMessage.warning('未找到该位置的精确坐标')
-      return
-    }
-    setOrigin(loc, label)
-    selectMode.value = 'dest'
-  })
+  originResolving.value = true
+  void resolveTipLocation(it, label)
+    .then((loc) => {
+      if (!loc) {
+        ElMessage.warning('未找到该位置的精确坐标')
+        return
+      }
+      setOrigin(loc, label)
+      selectMode.value = 'dest'
+    })
+    .finally(() => {
+      originResolving.value = false
+    })
 }
 
 const onSelectDest = (it: any) => {
   const label = `${it.name || it.value || ''} ${it.address || it.district || ''}`.trim()
-  if (isValidLngLat(it.lng, it.lat)) {
-    setDest({ lng: Number(it.lng), lat: Number(it.lat) }, label)
+  debugGeo('onSelectDest', { label, item: it })
+  destResolving.value = true
+  void resolveTipLocation(it, label)
+    .then((loc) => {
+      if (!loc) {
+        debugGeo('onSelectDest.noLocation', { label })
+        ElMessage.warning('未找到该位置的精确坐标')
+        return
+      }
+      setDest(loc, label)
+      // resolvedAliases 已在 setDest 中维护，避免在解析成功前就写入别名
+      debugGeo('onSelectDest.setDest', { label, loc })
+    })
+    .finally(() => {
+      destResolving.value = false
+    })
+}
+
+const resolveAndSet = async (type: 'origin' | 'dest', keyword?: string) => {
+  const clean = (keyword || '').trim()
+  if (!clean) return
+  if (
+    type === 'origin' &&
+    lastResolved.value.origin === clean &&
+    form.value.origin_lat &&
+    form.value.origin_lng
+  ) {
     return
   }
-  void geocodeByKeyword(label).then((loc) => {
-    if (!loc) {
-      ElMessage.warning('未找到该位置的精确坐标')
-      return
-    }
-    setDest(loc, label)
-  })
+  if (
+    type === 'dest' &&
+    lastResolved.value.dest === clean &&
+    form.value.dest_lat &&
+    form.value.dest_lng
+  ) {
+    return
+  }
+  const loc = await resolveKeyword(clean)
+  if (!loc) {
+    ElMessage.warning('未找到该位置的精确坐标')
+    return
+  }
+  if (type === 'origin') {
+    setOrigin(loc, clean)
+    selectMode.value = 'dest'
+  } else {
+    setDest(loc, clean)
+  }
+}
+
+const onEnterOrigin = () => {
+  if (originResolving.value) return
+  if (
+    form.value.origin_lat &&
+    isAliasMatch((search.value.origin || '').trim(), resolvedAliases.value.origin || [])
+  ) {
+    return
+  }
+  void resolveFromSuggestions('origin', search.value.origin)
+}
+
+const onEnterDest = () => {
+  if (destResolving.value) return
+  if (
+    form.value.dest_lat &&
+    isAliasMatch((search.value.dest || '').trim(), resolvedAliases.value.dest || [])
+  ) {
+    return
+  }
+  void resolveFromSuggestions('dest', search.value.dest)
+}
+
+const onBlurOrigin = () => {
+  if (originResolving.value) return
+  if (
+    form.value.origin_lat &&
+    isAliasMatch((search.value.origin || '').trim(), resolvedAliases.value.origin || [])
+  ) {
+    return
+  }
+  void resolveFromSuggestions('origin', search.value.origin)
+}
+
+const onBlurDest = () => {
+  if (destResolving.value) return
+  if (
+    form.value.dest_lat &&
+    isAliasMatch((search.value.dest || '').trim(), resolvedAliases.value.dest || [])
+  ) {
+    return
+  }
+  void resolveFromSuggestions('dest', search.value.dest)
 }
 
 const applyPoiExample = (keyword: string): void => {
@@ -1023,7 +1449,7 @@ const preloadRoute = async (): Promise<void> => {
 const submit = async () => {
   try {
     await formRef.value?.validate()
-    
+
     submitting.value = true
     const payload = {
       type: form.value.type,
@@ -1041,9 +1467,9 @@ const submit = async () => {
       slaMinutes: form.value.slaMinutes,
       considerWeather: form.value.considerWeather,
       avoidNoFlyZones: form.value.avoidNoFlyZones,
-      routeOptimizeStrategy: routeStrategy.value
+      routeOptimizeStrategy: routeStrategy.value,
     }
-    
+
     await createTask(payload)
     ElMessage.success('任务已提交，等待审核')
     router.push({ name: 'TaskList' })
@@ -1089,7 +1515,9 @@ const addRecentLocation = (label: string, lng: number, lat: number): void => {
   const safeLabel = label?.trim()
   if (!safeLabel || !lng || !lat) return
   const key = `${lng.toFixed(6)},${lat.toFixed(6)}`
-  const list = recentLocations.value.filter(it => `${it.lng.toFixed(6)},${it.lat.toFixed(6)}` !== key)
+  const list = recentLocations.value.filter(
+    (it) => `${it.lng.toFixed(6)},${it.lat.toFixed(6)}` !== key,
+  )
   list.unshift({ label: safeLabel, lng, lat, ts: Date.now() })
   recentLocations.value = list.slice(0, 8)
   persistRecentLocations()
@@ -1102,10 +1530,10 @@ onMounted(() => {
 
 const getTaskTypeText = (type: string): string => {
   const map: Record<string, string> = {
-    'supplies_transport': '物资运输',
-    'transfer_patient': '患者转运',
-    'organ': '器官运输',
-    'doctor_dispatch': '医生派遣'
+    supplies_transport: '物资运输',
+    transfer_patient: '患者转运',
+    organ: '器官运输',
+    doctor_dispatch: '医生派遣',
   }
   return map[type] || type
 }
@@ -1130,6 +1558,10 @@ const getRiskText = (risk: number): string => {
   if (risk < 0.3) return '低风险'
   if (risk < 0.6) return '中风险'
   return '高风险'
+}
+
+const formatRiskValue = (val: number): string => {
+  return `${(val / 100).toFixed(2)}`
 }
 
 const getBatteryColor = (level: number): string => {
@@ -1284,11 +1716,17 @@ const getWeatherTagType = (weather: string): string => {
 }
 
 .map-section {
+  position: relative;
   height: 500px;
   border-radius: 8px;
   overflow: hidden;
   margin-bottom: 16px;
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
+}
+
+.map-section :deep(.map-wrapper) {
+  width: 100%;
+  height: 100%;
 }
 
 .coordinate-info {
