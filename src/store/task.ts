@@ -6,9 +6,12 @@ export const useTaskStore = defineStore('task', {
   actions: {
     async load(params?: any) {
       this.loading = true
-      const res = await fetchTaskList(params)
-      this.list = res
-      this.loading = false
+      try {
+        const res = await fetchTaskList(params)
+        this.list = res.list || []
+      } finally {
+        this.loading = false
+      }
     },
   },
 })

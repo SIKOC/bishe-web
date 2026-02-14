@@ -20,7 +20,8 @@ export const useTaskStore = defineStore('task', () => {
     loading.value = true
     try {
       const res = await fetchTaskList(params)
-      setTasks(res, Array.isArray(res) ? res.length : 0)
+      // fetchTaskList now returns { list, total }
+      setTasks(res.list || [], res.total || (Array.isArray(res.list) ? res.list.length : 0))
     } finally {
       loading.value = false
     }

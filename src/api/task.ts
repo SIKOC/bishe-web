@@ -1,25 +1,33 @@
 import request from '@/utils/request'
 
-export async function fetchTaskList(params?: any): Promise<any[]> {
+export async function fetchTaskList(params?: any): Promise<{ list: any[]; total: number }> {
   const res: any = await request.get('/task/tasks', { params })
-  return (res?.data?.list || res?.list || []).map((t: any) => ({
+  const rawList = res?.data?.list || res?.list || []
+  const total = res?.data?.total ?? (Array.isArray(rawList) ? rawList.length : 0)
+  const list = rawList.map((t: any) => ({
     id: t.task_id,
-    name: `任务-${t.task_id}`,
-    status: (
-      {
-        pending: '待调度',
-        in_progress: '飞行中',
-        completed: '已完成',
-        canceled: '已取消',
-        pending_review: '待审核'
-      } as Record<string, string>
-    )[t.status] || t.status,
-    priority: ['低', '中', '高'][Math.min(Math.max((t.priority || 3) - 1, 0), 2)],
-    time: t.request_time,
+    name: t.name || `任务-${t.task_id}`,
+    status:
+      (
+        {
+          pending: '待调度',
+          in_progress: '飞行中',
+          completed: '已完成',
+          canceled: '已取消',
+          pending_review: '待审核',
+        } as Record<string, string>
+      )[t.status] || t.status,
+    // 统一返回中文优先级标签
+    priority: ['低', '中', '高'][Math.min(Math.max((Number(t.priority) || 3) - 1, 0), 2)],
+    time: t.request_time || t.created_at || t.time,
+    originName: t.origin_name || t.origin || '',
+    destinationName: t.destination_name || t.destination || '',
     origin: t.origin_hospital_id,
     target: t.destination_hospital_id,
-    auditStatus: t.audit_status
+    auditStatus: t.audit_status ?? t.status,
+    raw: t,
   }))
+  return { list, total }
 }
 
 export async function fetchTaskDetail(id: string | number): Promise<any> {
@@ -32,7 +40,11 @@ export async function createTask(payload: any): Promise<any> {
   return request.post('/task/tasks', payload)
 }
 
-export async function auditTask(id: number, auditStatus: string, originHospitalId?: number): Promise<any> {
+export async function auditTask(
+  id: number,
+  auditStatus: string,
+  originHospitalId?: number,
+): Promise<any> {
   return request.put(`/task/tasks/${id}/audit`, { auditStatus, originHospitalId })
 }
 

@@ -1,14 +1,8 @@
 import axios from 'axios'
 import { useAuthStore } from '@/stores/auth'
 
-const defaultBase =
-  typeof window !== 'undefined' && window.location?.protocol === 'http:'
-    ? 'http://localhost:10010/api'
-    : 'https://localhost:10010/api'
-
 const service = axios.create({
-  // 默认指向后端网关 HTTPS，本地 http 页面自动使用 http
-  baseURL: import.meta.env.VITE_API_BASE || defaultBase,
+  baseURL: '/api',
   timeout: 15000,
   withCredentials: true,
 })

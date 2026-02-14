@@ -19,7 +19,12 @@
           </el-select>
         </el-form-item>
         <el-form-item label="优先级">
-          <el-select v-model="query.priority" clearable placeholder="全部优先级" style="width: 150px">
+          <el-select
+            v-model="query.priority"
+            clearable
+            placeholder="全部优先级"
+            style="width: 150px"
+          >
             <el-option
               v-for="p in priorityOptions"
               :key="p.value"
@@ -172,7 +177,11 @@
     <el-dialog v-model="auditVisible" title="任务审核" width="500px">
       <el-form :model="auditForm" label-width="120px">
         <el-form-item label="指派派出方">
-          <el-select v-model="auditForm.originHospitalId" placeholder="选择医院/基地" style="width: 100%">
+          <el-select
+            v-model="auditForm.originHospitalId"
+            placeholder="选择医院/基地"
+            style="width: 100%"
+          >
             <el-option
               v-for="hospital in hospitals"
               :key="hospital.hospitalId"
@@ -214,7 +223,17 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Refresh, Plus, Document, View, Check, User, Close, Top } from '@element-plus/icons-vue'
+import {
+  Search,
+  Refresh,
+  Plus,
+  Document,
+  View,
+  Check,
+  User,
+  Close,
+  Top,
+} from '@element-plus/icons-vue'
 import { fetchTaskList, auditTask, updateTaskStatus } from '@/api/task'
 import request from '@/utils/request'
 
@@ -231,17 +250,17 @@ const taskList = ref<any[]>([])
 const hospitals = ref<any[]>([])
 
 const statusOptions = [
-  { label: '待审核', value: 'pending' },
+  { label: '待审核', value: 'pending_review' },
   { label: '待调度', value: 'pending' },
   { label: '进行中', value: 'in_progress' },
   { label: '已完成', value: 'completed' },
-  { label: '已取消', value: 'canceled' }
+  { label: '已取消', value: 'canceled' },
 ]
 
 const priorityOptions = [
-  { label: '低', value: '1' },
-  { label: '中', value: '3' },
-  { label: '高', value: '5' }
+  { label: '低', value: 1 },
+  { label: '中', value: 3 },
+  { label: '高', value: 5 },
 ]
 
 const isAdmin = computed(() => {
@@ -258,7 +277,7 @@ const filtered = computed(() => {
   return taskList.value.map((t, idx) => ({
     ...t,
     __index: idx,
-    priorityNum: t.priority === '低' ? 1 : t.priority === '中' ? 3 : 5
+    priorityNum: t.priority === '低' ? 1 : t.priority === '中' ? 3 : 5,
   }))
 })
 
@@ -286,9 +305,9 @@ const stats = computed(() => {
   const completedSet = new Set(['已完成', 'completed'])
   return {
     total: list.length,
-    pending: list.filter(t => pendingSet.has(t.status)).length,
-    inProgress: list.filter(t => inProgressSet.has(t.status)).length,
-    completed: list.filter(t => completedSet.has(t.status)).length
+    pending: list.filter((t) => pendingSet.has(t.status)).length,
+    inProgress: list.filter((t) => inProgressSet.has(t.status)).length,
+    completed: list.filter((t) => completedSet.has(t.status)).length,
   }
 })
 
@@ -298,15 +317,15 @@ const stats = computed(() => {
 const load = async (): Promise<void> => {
   loading.value = true
   try {
-    const list = await fetchTaskList({
+    const res = await fetchTaskList({
       page: currentPage.value,
       size: pageSize.value,
-      ...query.value
+      ...query.value,
     })
-    taskList.value = list
-    total.value = list.length // TODO: 从后端获取总数
+    taskList.value = res.list || []
+    total.value = res.total || (Array.isArray(res.list) ? res.list.length : 0)
     if (orderIds.value.length === 0) {
-      orderIds.value = list.map((t: any) => t.id)
+      orderIds.value = (res.list || []).map((t: any) => t.id)
     }
   } catch (error) {
     ElMessage.error('加载任务列表失败')
@@ -338,7 +357,7 @@ const onDragStart = (row: any): void => {
 
 const onDrop = (row: any): void => {
   if (!dragId.value || dragId.value === row.id) return
-  const ids = displayList.value.map(r => r.id)
+  const ids = displayList.value.map((r) => r.id)
   const from = ids.indexOf(dragId.value)
   const to = ids.indexOf(row.id)
   if (from === -1 || to === -1) return
@@ -372,7 +391,7 @@ const audit = async (row: any): Promise<void> => {
   auditForm.value.id = row.id
   auditForm.value.originHospitalId = row.origin || 1
   auditVisible.value = true
-  
+
   // 加载医院列表
   if (hospitals.value.length === 0) {
     try {
@@ -389,7 +408,7 @@ const auditForm = ref({
   id: 0,
   originHospitalId: 1,
   auditStatus: 'approved',
-  remark: ''
+  remark: '',
 })
 
 /**
@@ -401,7 +420,7 @@ const confirmAudit = async (): Promise<void> => {
     await auditTask(
       auditForm.value.id,
       auditForm.value.auditStatus,
-      auditForm.value.originHospitalId
+      auditForm.value.originHospitalId,
     )
     ElMessage.success('审核完成')
     auditVisible.value = false
@@ -427,7 +446,7 @@ const assign = (row: any): void => {
 const cancel = async (id: number): Promise<void> => {
   try {
     await ElMessageBox.confirm('确定要取消此任务吗？', '提示', {
-      type: 'warning'
+      type: 'warning',
     })
     await updateTaskStatus(id, 'canceled')
     ElMessage.success('任务已取消')
@@ -445,12 +464,12 @@ const cancel = async (id: number): Promise<void> => {
  */
 const getTagType = (status: string): string => {
   const typeMap: Record<string, string> = {
-    '待审核': 'info',
-    '待调度': '',
-    '进行中': 'warning',
-    '飞行中': 'warning',
-    '已完成': 'success',
-    '已取消': 'danger'
+    待审核: 'info',
+    待调度: '',
+    进行中: 'warning',
+    飞行中: 'warning',
+    已完成: 'success',
+    已取消: 'danger',
   }
   return typeMap[status] || ''
 }
@@ -465,7 +484,7 @@ const getStatusBubbleClass = (status: string): string => {
 const togglePin = (row: any): void => {
   const id = row.id
   if (isPinned(id)) {
-    pinnedIds.value = pinnedIds.value.filter(v => v !== id)
+    pinnedIds.value = pinnedIds.value.filter((v) => v !== id)
   } else {
     pinnedIds.value = [id, ...pinnedIds.value]
   }
@@ -489,10 +508,13 @@ const loadOrderCache = (): void => {
 
 const saveOrderCache = (): void => {
   try {
-    window.localStorage.setItem(storageKey, JSON.stringify({
-      orderIds: orderIds.value,
-      pinnedIds: pinnedIds.value
-    }))
+    window.localStorage.setItem(
+      storageKey,
+      JSON.stringify({
+        orderIds: orderIds.value,
+        pinnedIds: pinnedIds.value,
+      }),
+    )
   } catch {
     // ignore
   }
@@ -509,7 +531,7 @@ const formatTime = (timeStr?: string): string => {
     month: '2-digit',
     day: '2-digit',
     hour: '2-digit',
-    minute: '2-digit'
+    minute: '2-digit',
   })
 }
 
@@ -532,9 +554,13 @@ onMounted(() => {
   load()
 })
 
-watch([orderIds, pinnedIds], () => {
-  saveOrderCache()
-}, { deep: true })
+watch(
+  [orderIds, pinnedIds],
+  () => {
+    saveOrderCache()
+  },
+  { deep: true },
+)
 </script>
 
 <style scoped lang="scss">
@@ -614,7 +640,9 @@ watch([orderIds, pinnedIds], () => {
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
   position: relative;
   cursor: pointer;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  transition:
+    transform 0.2s ease,
+    box-shadow 0.2s ease;
 }
 .task-card:hover {
   transform: translateY(-2px);
@@ -747,7 +775,7 @@ watch([orderIds, pinnedIds], () => {
 
 :deep(.row-warning) {
   background-color: #fff7e6;
-  
+
   &:hover {
     background-color: #ffe7ba !important;
   }
@@ -755,7 +783,7 @@ watch([orderIds, pinnedIds], () => {
 
 :deep(.row-success) {
   background-color: #f6ffed;
-  
+
   &:hover {
     background-color: #d9f7be !important;
   }

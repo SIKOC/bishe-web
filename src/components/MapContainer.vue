@@ -199,15 +199,14 @@ const initMap = (): void => {
 
       // 等待地图加载完成
       map.value.on('complete', () => {
-        console.log('地图加载完成')
         map.value?.resize()
         if (props.markers && props.markers.length > 0) {
           updateMarkers()
         }
-        if (props.route && props.route.length > 0) {
-          updateRoute()
+        // 有路径或起终点标记时都调用 updateRoute（无路径时用高德 Driving 兜底）
+        if ((props.route && props.route.length > 0) || (props.markers && props.markers.length >= 2)) {
+          void updateRoute()
         }
-        // 有路径或标记时，由 updateRoute/updateMarkers 负责 autoFit，不调用 locateNow
         if (!props.center && !props.route?.length && (!props.markers || props.markers.length === 0)) {
           locateNow()
         }
@@ -434,15 +433,52 @@ const getMarkerIcon = (status?: string, batteryLevel?: number): string => {
  * 更新路径（沿道路正上方飞行路径）
  */
 const updateRoute = async (): Promise<void> => {
-  if (!map.value || !(window as any).AMap || !props.route || props.route.length === 0) {
-    if (polyline.value && map.value) {
+  if (!map.value || !(window as any).AMap) return
+
+  const AMap = (window as any).AMap
+
+  // 无路径时：若有起终点标记则用高德 Driving 获取沿道路路径，否则清除
+  if (!props.route || props.route.length === 0) {
+    const originMarker = props.markers?.find((m: any) => String(m.id) === 'origin')
+    const destMarker = props.markers?.find((m: any) => String(m.id) === 'dest')
+    const origin = originMarker ? normalizePoint({ lng: originMarker.lng, lat: originMarker.lat }) : null
+    const dest = destMarker ? normalizePoint({ lng: destMarker.lng, lat: destMarker.lat }) : null
+    if (origin && dest && isValidLngLat(origin.lng, origin.lat) && isValidLngLat(dest.lng, dest.lat)) {
+      const fallbackPath = [[origin.lng, origin.lat], [dest.lng, dest.lat]]
+      if (polyline.value) {
+        polyline.value.setPath(fallbackPath)
+      } else {
+        polyline.value = new AMap.Polyline({
+          path: fallbackPath,
+          isOutline: true,
+          outlineColor: '#ffffff',
+          borderWeight: 4,
+          strokeColor: '#1677ff',
+          strokeOpacity: 1,
+          strokeWeight: 8,
+          lineJoin: 'round',
+          lineCap: 'round',
+          zIndex: 50,
+        })
+        map.value.add(polyline.value)
+      }
+      if (driving.value) {
+        buildRoadAlignedPath(fallbackPath, AMap)
+          .then((roadPath) => {
+            if (roadPath.length >= 2) polyline.value?.setPath(roadPath)
+          })
+          .catch(() => {})
+      }
+      if (props.autoFit) safeSetBounds([fallbackPath[0], fallbackPath[1]], [40, 40, 40, 40])
+      return
+    }
+    if (polyline.value) {
       map.value.remove(polyline.value)
       polyline.value = null
     }
     return
   }
 
-  const AMap = (window as any).AMap
   const normalizedRoute = props.route
     .map((p) => normalizePoint(p))
     .filter((p): p is RoutePoint => !!p && isValidLngLat(p.lng, p.lat))
@@ -1203,11 +1239,11 @@ watch(
   { deep: true },
 )
 watch(
-  () => props.route,
+  () => [props.route, props.markers],
   () => {
-    void updateRoute()
+    if (map.value) void updateRoute()
   },
-  { deep: true },
+  { deep: true, immediate: true },
 )
 
 onMounted(() => {

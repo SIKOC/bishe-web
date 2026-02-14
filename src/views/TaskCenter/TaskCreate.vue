@@ -278,6 +278,7 @@
             <el-col :span="16">
               <div class="map-section">
                 <MapContainer
+                  :key="`route-${routeResult?.routeId || 'init'}`"
                   :markers="routeMarkers"
                   :route="routePoints"
                   :center="routeMapCenter"
@@ -1459,8 +1460,9 @@ const submit = async () => {
       origin_lng: form.value.origin_lng,
       dest_lat: form.value.dest_lat,
       dest_lng: form.value.dest_lng,
+      origin_name: search.value.origin || undefined,
+      destination_name: search.value.dest || undefined,
       requestUserId: 1, // TODO: 从store获取
-      auditStatus: 'pending_review',
       routeId: routeResult.value?.routeId,
       taskCategory: form.value.taskCategory,
       weightKg: form.value.weightKg,
@@ -1472,7 +1474,11 @@ const submit = async () => {
 
     await createTask(payload)
     ElMessage.success('任务已提交，等待审核')
-    router.push({ name: 'TaskList' })
+    // 跳转到任务列表并重置当前创建页状态，避免用户重复提交
+    try {
+      router.push({ name: 'TaskList' })
+    } catch {}
+    resetCreateForm()
   } catch (error: any) {
     if (error !== false) {
       ElMessage.error(error?.message || '提交失败，请稍后重试')
@@ -1480,6 +1486,46 @@ const submit = async () => {
   } finally {
     submitting.value = false
   }
+}
+
+/**
+ * 重置创建任务页面到初始状态
+ */
+const resetCreateForm = (): void => {
+  try {
+    // 重置表单验证与字段
+    formRef.value?.resetFields?.()
+  } catch {}
+  // 恢复默认值
+  form.value = {
+    type: 'supplies_transport',
+    priority: 3,
+    remarks: '',
+    origin_lat: 0,
+    origin_lng: 0,
+    dest_lat: 0,
+    dest_lng: 0,
+    taskCategory: 'organ',
+    weightKg: 1,
+    slaMinutes: 60,
+    considerWeather: true,
+    avoidNoFlyZones: true,
+  }
+  // 重置步骤、搜索、路径等状态
+  step.value = 0
+  routeResult.value = null
+  preRouteCache.value = null
+  search.value = { origin: '', dest: '' }
+  lastResolved.value = { origin: '', dest: '' }
+  resolvedAliases.value = { origin: [], dest: [] }
+  originSuggestions.value = []
+  destSuggestions.value = []
+  routeStrategy.value = 'shortest'
+  centerRef.value = undefined
+  // 触发地图组件刷新（如果需要）
+  try {
+    mapRef.value?.reset?.()
+  } catch {}
 }
 
 const loadMapConfig = async (): Promise<void> => {
