@@ -4,6 +4,7 @@ export interface ChatUser {
   userId: number
   userName: string
   role: string
+  avatarUrl?: string
 }
 
 export interface ChatConversation {
@@ -13,6 +14,7 @@ export interface ChatConversation {
   lastContent: string
   lastTime: string
   unreadCount: number
+  avatarUrl?: string
 }
 
 export interface ChatMessage {
@@ -26,8 +28,8 @@ export interface ChatMessage {
   content: string
   extra?: string
   sendTime: string
-  readFlag: number
-  recallFlag?: number
+  readStatus: number // Updated from readFlag
+  // recallFlag?: number // Removed in V7
 }
 
 export function fetchChatUsers(keyword?: string) {

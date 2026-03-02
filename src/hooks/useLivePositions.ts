@@ -34,28 +34,28 @@ export function useLivePositions(options: UseLivePositionsOptions = {}) {
    */
   const convertToMarker = (dto: DronePositionDTO): DroneMarker => {
     // 兼容后端字段命名（驼峰/下划线）
-    const lng = (dto as any).longitude ?? dto.lng ?? (dto as any).lon
-    const lat = (dto as any).latitude ?? dto.lat
-    const battery = (dto as any).battery_level ?? dto.batteryLevel
-    const droneId = (dto as any).drone_id ?? dto.droneId
-    const droneCode = (dto as any).drone_code ?? dto.droneCode
+    const lng = (dto as any).current_lng ?? (dto as any).currentLng ?? (dto as any).longitude ?? dto.lng ?? (dto as any).lon
+    const lat = (dto as any).current_lat ?? (dto as any).currentLat ?? (dto as any).latitude ?? dto.lat
+    const battery = (dto as any).battery_level ?? dto.batteryLevel ?? (dto as any).battery
+    const droneId = (dto as any).drone_id ?? dto.droneId ?? (dto as any).id
+    const droneCode = (dto as any).drone_code ?? dto.droneCode ?? (dto as any).model
     const taskId = (dto as any).task_id ?? dto.taskId
-    const altitude = (dto as any).altitude ?? (dto as any).alt
+    const altitude = (dto as any).altitude ?? (dto as any).alt ?? (dto as any).current_altitude
     const heading = (dto as any).heading
-    const speed = (dto as any).speed
+    const speed = (dto as any).speed ?? (dto as any).max_speed
     const status = (dto as any).status
-    const updatedAt = (dto as any).updated_at ?? dto.lastUpdateTime
+    const updatedAt = (dto as any).updated_at ?? dto.lastUpdateTime ?? (dto as any).last_check_time
 
     return {
       id: droneId,
-      lat,
-      lng,
-      altitude,
-      label: droneCode,
+      lat: lat || 0, // Ensure not undefined
+      lng: lng || 0, // Ensure not undefined
+      altitude: altitude || 0,
+      label: droneCode || `DRONE-${droneId}`,
       status: getStatusFromDto(status),
-      batteryLevel: battery,
-      speed,
-      heading,
+      batteryLevel: battery || 0,
+      speed: speed || 0,
+      heading: heading || 0,
       taskId,
       lastUpdateTime: updatedAt ? new Date(updatedAt).getTime() : undefined
     }
@@ -79,12 +79,24 @@ export function useLivePositions(options: UseLivePositionsOptions = {}) {
    * HTTP轮询获取位置
    */
   const pollPositions = async (): Promise<void> => {
-        try {
-      const res = await request.get('/monitor/live').catch(() => request.get('/drone/live'))
+    try {
+      // Use /drone/live to get real-time positions
+      const res: any = await request.get('/drone/live')
       const data = res?.data || res || []
-      const list: DronePositionDTO[] = Array.isArray(data) ? data : []
+      const list: any[] = Array.isArray(data) ? data : []
       
-      markers.value = list.map(convertToMarker)
+      // Update markers
+      // Note: /drone/live returns DroneLiveDTO which convertToMarker handles
+      // But we might want to merge with existing markers to preserve static info if needed
+      // For now, just mapping live data is enough for position updates
+      const newMarkers = list.map(convertToMarker)
+      
+      // Merge logic: if marker exists, update it; if not, add it
+      // Actually, if we just replace markers, we might lose selection state or static info if markers contained more
+      // But DroneMarker interface is simple.
+      // Let's just replace for simplicity, or merge if we want to be fancy.
+      // Since this is a list of ALL live drones, replacing is fine.
+      markers.value = newMarkers
     } catch (error) {
       console.error('Failed to fetch drone positions:', error)
     }

@@ -104,8 +104,8 @@
             <div class="thumb-line"></div>
             <div class="thumb-dot end"></div>
             <div class="thumb-labels">
-              <span>{{ row.originName || row.origin || '起点' }}</span>
-              <span>{{ row.destName || row.destination || '终点' }}</span>
+              <span>{{ row.originName || row.origin_name || '起点' }}</span>
+              <span>{{ row.destinationName || row.destination_name || '终点' }}</span>
             </div>
           </div>
           <div class="card-meta">
@@ -277,7 +277,7 @@ const filtered = computed(() => {
   return taskList.value.map((t, idx) => ({
     ...t,
     __index: idx,
-    priorityNum: t.priority === '低' ? 1 : t.priority === '中' ? 3 : 5,
+    priorityNum: typeof t.priority === 'number' ? t.priority : (t.priority === '低' ? 1 : t.priority === '中' ? 3 : 5),
   }))
 })
 

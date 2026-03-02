@@ -76,12 +76,85 @@ interface Props {
 
 const props = withDefaults(defineProps<Props>(), {
   markers: () => [],
-  coordType: 'gcj02',
+  coordType: 'wgs84',
   showToolbar: true,
   zoom: 11,
   showTrack: false,
   autoFit: true,
 })
+
+// 监听器锁：防止 markers/route 变化时重复触发 update
+let isUpdating = false
+let updateTimer: any = null
+
+const isDebug = () => {
+  try {
+    return (import.meta as any)?.env?.VITE_MAP_DEBUG === '1' || (window as any).__MAP_DEBUG === true
+  } catch {
+    return false
+  }
+}
+
+let dbgUpdateCount = 0
+let dbgFitCount = 0
+let dbgLastUpdate: any = null
+let dbgLastFit: any = null
+let userInteracted = false
+
+const dbg = (type: string, payload: any) => {
+  if (!isDebug()) return
+  try {
+    console.debug(`[MapContainer][${type}]`, payload)
+  } catch {}
+}
+
+const markersKey = computed(() => {
+  const ms = props.markers || []
+  if (!Array.isArray(ms) || ms.length === 0) return ''
+  return ms
+    .map((m: any) => {
+      const id = String(m?.id ?? '')
+      const lng = Number(m?.lng)
+      const lat = Number(m?.lat)
+      const lngS = Number.isFinite(lng) ? lng.toFixed(6) : 'x'
+      const latS = Number.isFinite(lat) ? lat.toFixed(6) : 'x'
+      const label = String(m?.label ?? '')
+      return `${id}:${lngS},${latS}:${label}`
+    })
+    .join('|')
+})
+
+const routeKey = computed(() => {
+  const r = props.route || []
+  if (!Array.isArray(r) || r.length === 0) return ''
+  const first = normalizePoint(r[0])
+  const mid = normalizePoint(r[Math.floor(r.length / 2)])
+  const last = normalizePoint(r[r.length - 1])
+  const fmt = (p: any) =>
+    p && Number.isFinite(p.lng) && Number.isFinite(p.lat) ? `${p.lng.toFixed(6)},${p.lat.toFixed(6)}` : 'x'
+  return `${r.length}|${fmt(first)}|${fmt(mid)}|${fmt(last)}`
+})
+
+const safeUpdate = (force = false, reason = 'unknown') => {
+  if (isUpdating && !force) return
+  isUpdating = true
+  if (updateTimer) clearTimeout(updateTimer)
+  if (force) userInteracted = false
+  
+  updateTimer = setTimeout(() => {
+    if (!map.value) {
+      isUpdating = false
+      return
+    }
+    dbgUpdateCount++
+    dbgLastUpdate = { time: Date.now(), force, reason, markersKey: markersKey.value, routeKey: routeKey.value }
+    dbg('update', dbgLastUpdate)
+    ensureInteractive()
+    updateMarkers(force)
+    void updateRoute(force)
+    isUpdating = false
+  }, 100)
+}
 
 const emit = defineEmits<{
   'map-click': [point: { lng: number; lat: number }]
@@ -91,8 +164,39 @@ const emit = defineEmits<{
   'locate-progress': [message: string]
 }>()
 
+const ensureInteractive = () => {
+  try {
+    if (!map.value) return
+    map.value.setStatus({
+      dragEnable: true,
+      zoomEnable: true,
+      doubleClickZoom: true,
+      scrollWheel: true,
+      keyboardEnable: true,
+      touchZoom: true,
+      resizeEnable: true,
+    })
+  } catch {}
+}
+
+const lockAutoFit = (ms = 1500) => {
+  // autoFitLockUntil = Date.now() + ms
+}
+
+const enableAutoFit = () => {
+  // no-op
+}
+
+const canAutoFit = () => true
+
+const onUserInteraction = () => {
+  // 不做任何锁定，只确保交互开启
+  ensureInteractive()
+}
+
 const containerId = `amap-${Math.random().toString(36).substr(2, 9)}`
 const map = shallowRef<any>(null)
+const mapReady = ref(false)
 const driving = shallowRef<any>(null)
 const polyline = shallowRef<any>(null)
 const markerMap = new Map<string | number, any>()
@@ -114,6 +218,7 @@ const FALLBACK_AMAP_SECURITY = 'a2bd6dc7e8ed3d039ff6105cbf9147d9'
 const initMap = (): void => {
   loading.value = true
   error.value = ''
+  mapReady.value = false
 
   const envKey = import.meta.env.VITE_AMAP_KEY
   const envSecurity = import.meta.env.VITE_AMAP_SECURITY
@@ -166,6 +271,9 @@ const initMap = (): void => {
       })
     })
     .then((AMap) => {
+      if (!(window as any).AMap) {
+        ;(window as any).AMap = AMap
+      }
       loading.value = false
       error.value = ''
 
@@ -189,6 +297,40 @@ const initMap = (): void => {
         features: ['bg', 'road', 'point', 'building'],
         zooms: [3, 20],
         resizeEnable: true,
+        dragEnable: true,
+        zoomEnable: true,
+        doubleClickZoom: true,
+        scrollWheel: true,
+        keyboardEnable: true,
+        touchZoom: true,
+        touchZoomCenter: 1,
+      })
+
+      // 强制所有交互开关为开启
+      ensureInteractive()
+
+      map.value.on('dragstart', () => {
+        onUserInteraction()
+        userInteracted = true
+        dbg('event', { type: 'dragstart', time: Date.now() })
+      })
+      map.value.on('zoomstart', () => {
+        onUserInteraction()
+        userInteracted = true
+        dbg('event', { type: 'zoomstart', time: Date.now() })
+      })
+      map.value.on('mousewheel', () => {
+        onUserInteraction()
+        userInteracted = true
+        dbg('event', { type: 'mousewheel', time: Date.now() })
+      })
+      map.value.on('touchstart', () => {
+        onUserInteraction()
+        userInteracted = true
+        dbg('event', { type: 'touchstart', time: Date.now() })
+      })
+      map.value.on('moveend', () => {
+        dbg('event', { type: 'moveend', time: Date.now() })
       })
 
       // 兜底添加基础底图层，防止样式/容器问题导致空白
@@ -199,14 +341,10 @@ const initMap = (): void => {
 
       // 等待地图加载完成
       map.value.on('complete', () => {
+        mapReady.value = true
         map.value?.resize()
-        if (props.markers && props.markers.length > 0) {
-          updateMarkers()
-        }
-        // 有路径或起终点标记时都调用 updateRoute（无路径时用高德 Driving 兜底）
-        if ((props.route && props.route.length > 0) || (props.markers && props.markers.length >= 2)) {
-          void updateRoute()
-        }
+        ensureInteractive()
+        safeUpdate(true, 'map.complete')
         if (!props.center && !props.route?.length && (!props.markers || props.markers.length === 0)) {
           locateNow()
         }
@@ -214,7 +352,14 @@ const initMap = (): void => {
 
       // 地图点击事件
       map.value.on('click', (e: any) => {
-        emit('map-click', { lng: e.lnglat.getLng(), lat: e.lnglat.getLat() })
+        let lng = e.lnglat.getLng()
+        let lat = e.lnglat.getLat()
+        if (props.coordType === 'wgs84') {
+          const wgs = gcj02ToWgs84(lng, lat)
+          lng = wgs.lng
+          lat = wgs.lat
+        }
+        emit('map-click', { lng, lat })
       })
 
       // 初始化路径规划插件（不显示在地图上）
@@ -257,7 +402,18 @@ const initMap = (): void => {
 /**
  * 更新标记点
  */
-const updateMarkers = (): void => {
+const getFallbackMarkers = (): DroneMarker[] => {
+  if (!props.route || props.route.length < 2) return []
+  const start = normalizePoint(props.route[0] as any)
+  const end = normalizePoint(props.route[props.route.length - 1] as any)
+  if (!start || !end) return []
+  return [
+    { id: 'route-origin', lng: start.lng, lat: start.lat, label: '起点', status: 'normal' },
+    { id: 'route-dest', lng: end.lng, lat: end.lat, label: '终点', status: 'warning' },
+  ]
+}
+
+const updateMarkers = (force = false): void => {
   if (!map.value || !(window as any).AMap) {
     return
   }
@@ -265,8 +421,13 @@ const updateMarkers = (): void => {
   try {
     const AMap = (window as any).AMap
     const currentIds = new Set<string | number>()
+    const markerSource =
+      props.markers && props.markers.length > 0 ? props.markers : getFallbackMarkers()
+    
+    // 强制交互检查
+    ensureInteractive()
 
-    props.markers?.forEach((m) => {
+    markerSource.forEach((m) => {
       // 防御：确保传入的经纬为数值
       const normalized = normalizePoint({ lng: (m as any).lng, lat: (m as any).lat })
       if (!normalized || !isValidLngLat(normalized.lng, normalized.lat)) {
@@ -286,8 +447,8 @@ const updateMarkers = (): void => {
           const marker = new AMap.Marker({
             position: [normalized.lng, normalized.lat],
             content: infoContent,
-            offset: new AMap.Pixel(-15, -30),
-            anchor: 'bottom-center',
+            offset: new AMap.Pixel(0, 0),
+            anchor: 'center',
             zIndex: 100,
             animation: 'AMAP_ANIMATION_DROP',
           })
@@ -317,21 +478,23 @@ const updateMarkers = (): void => {
     })
 
     // 如果有标记，自动调整视野（防护）
-    if (props.markers && props.markers.length > 0 && props.autoFit) {
+    if (markerSource.length > 0) {
       const points: number[][] = []
-      props.markers.forEach((m) => {
+      markerSource.forEach((m) => {
         const normalized = normalizePoint({ lng: (m as any).lng, lat: (m as any).lat })
         if (!normalized || !isValidLngLat(normalized.lng, normalized.lat)) return
         points.push([normalized.lng, normalized.lat])
       })
-      if (points.length > 0) {
+      // 如果 markers 数量 >= 2，或者强制更新，则适配视野
+      if (points.length >= 2 || force) {
         try {
-          safeSetBounds(points, [20, 20, 20, 20])
+          safeSetBounds(points, [50, 50, 50, 50], undefined, force)
         } catch (e) {
           console.warn('safeSetBounds failed:', e)
         }
       }
     }
+    ensureInteractive()
   } catch (err) {
     console.warn('updateMarkers failed:', err, props.markers)
   }
@@ -342,51 +505,9 @@ const updateMarkers = (): void => {
  */
 const createInfoWindowContent = (marker: DroneMarker): string => {
   const statusColor = getStatusColor(marker.status)
-  const statusText = getStatusText(marker.status)
-  const batteryColor = marker.batteryLevel && marker.batteryLevel < 20 ? '#ff4d4f' : '#52c41a'
-
-  // 创建更美观的标记点
-  return `
-    <div style="
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      padding: 2px;
-      border-radius: 50%;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-    ">
-      <div style="
-        background: white;
-        border-radius: 50%;
-        width: 32px;
-        height: 32px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        position: relative;
-      ">
-        <div style="
-          width: 20px;
-          height: 20px;
-          border-radius: 50%;
-          background: ${statusColor};
-          border: 2px solid white;
-          box-shadow: 0 0 8px ${statusColor};
-          position: relative;
-        ">
-          <div style="
-            position: absolute;
-            top: -2px;
-            left: 50%;
-            transform: translateX(-50%);
-            width: 0;
-            height: 0;
-            border-left: 4px solid transparent;
-            border-right: 4px solid transparent;
-            border-top: 6px solid ${statusColor};
-          "></div>
-        </div>
-      </div>
-    </div>
-  `
+  
+  // 使用紧凑的HTML字符串，避免解析问题
+  return `<div style="background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);padding:2px;border-radius:50%;box-shadow:0 4px 12px rgba(0,0,0,0.3);width:36px;height:36px;display:flex;align-items:center;justify-content:center;"><div style="background:white;border-radius:50%;width:32px;height:32px;display:flex;align-items:center;justify-content:center;position:relative;"><div style="width:20px;height:20px;border-radius:50%;background:${statusColor};border:2px solid white;box-shadow:0 0 8px ${statusColor};"></div></div></div>`
 }
 
 /**
@@ -432,44 +553,59 @@ const getMarkerIcon = (status?: string, batteryLevel?: number): string => {
 /**
  * 更新路径（沿道路正上方飞行路径）
  */
-const updateRoute = async (): Promise<void> => {
+const updateRoute = async (force = false): Promise<void> => {
   if (!map.value || !(window as any).AMap) return
 
   const AMap = (window as any).AMap
+  ensureInteractive()
 
-  // 无路径时：若有起终点标记则用高德 Driving 获取沿道路路径，否则清除
+  const normalizeDrivingPath = (raw: any): number[][] => {
+    if (!Array.isArray(raw)) return []
+    return raw
+      .map((p: any) => {
+        const lng = typeof p?.getLng === 'function' ? p.getLng() : p?.lng
+        const lat = typeof p?.getLat === 'function' ? p.getLat() : p?.lat
+        return [Number(lng), Number(lat)]
+      })
+      .filter((p: any) => isValidLngLat(p?.[0], p?.[1]))
+  }
+
+  // 1. 无路径时：尝试从 markers 提取起终点，并在前端进行 Driving 规划
   if (!props.route || props.route.length === 0) {
     const originMarker = props.markers?.find((m: any) => String(m.id) === 'origin')
     const destMarker = props.markers?.find((m: any) => String(m.id) === 'dest')
     const origin = originMarker ? normalizePoint({ lng: originMarker.lng, lat: originMarker.lat }) : null
     const dest = destMarker ? normalizePoint({ lng: destMarker.lng, lat: destMarker.lat }) : null
+    
     if (origin && dest && isValidLngLat(origin.lng, origin.lat) && isValidLngLat(dest.lng, dest.lat)) {
-      const fallbackPath = [[origin.lng, origin.lat], [dest.lng, dest.lat]]
+      // 移除旧线
       if (polyline.value) {
-        polyline.value.setPath(fallbackPath)
-      } else {
-        polyline.value = new AMap.Polyline({
-          path: fallbackPath,
-          isOutline: true,
-          outlineColor: '#ffffff',
-          borderWeight: 4,
-          strokeColor: '#1677ff',
-          strokeOpacity: 1,
-          strokeWeight: 8,
-          lineJoin: 'round',
-          lineCap: 'round',
-          zIndex: 50,
-        })
-        map.value.add(polyline.value)
+        map.value.remove(polyline.value)
+        polyline.value = null
       }
+      
+      // 前端发起路径规划
       if (driving.value) {
-        buildRoadAlignedPath(fallbackPath, AMap)
-          .then((roadPath) => {
-            if (roadPath.length >= 2) polyline.value?.setPath(roadPath)
-          })
-          .catch(() => {})
+        driving.value.search(
+          new AMap.LngLat(origin.lng, origin.lat),
+          new AMap.LngLat(dest.lng, dest.lat),
+          (status: string, result: any) => {
+            if (status === 'complete' && result.routes && result.routes.length) {
+              const roadPath = normalizeDrivingPath(result.routes?.[0]?.path)
+              if (roadPath.length >= 2) {
+                drawPolyline(roadPath, AMap, force, false)
+              } else {
+                drawStraightLine(origin, dest, AMap, force)
+              }
+            } else {
+              // 失败降级为直线
+              drawStraightLine(origin, dest, AMap, force)
+            }
+          }
+        )
+      } else {
+         drawStraightLine(origin, dest, AMap, force)
       }
-      if (props.autoFit) safeSetBounds([fallbackPath[0], fallbackPath[1]], [40, 40, 40, 40])
       return
     }
     if (polyline.value) {
@@ -483,126 +619,80 @@ const updateRoute = async (): Promise<void> => {
     .map((p) => normalizePoint(p))
     .filter((p): p is RoutePoint => !!p && isValidLngLat(p.lng, p.lat))
   const rawPath = normalizedRoute.map((p) => [p.lng, p.lat])
-  const seq = ++routeRenderSeq
-  const path = downsamplePath(rawPath, 20)
-  if (path.length < 2) {
-    // 后端路径点不足时，从 markers 取起终点，用高德 Driving 获取沿道路路径
-    const originMarker = props.markers?.find((m: any) => String(m.id) === 'origin')
-    const destMarker = props.markers?.find((m: any) => String(m.id) === 'dest')
-    const origin = originMarker
-      ? normalizePoint({ lng: originMarker.lng, lat: originMarker.lat })
-      : null
-    const dest = destMarker ? normalizePoint({ lng: destMarker.lng, lat: destMarker.lat }) : null
-    if (
-      origin &&
-      dest &&
-      isValidLngLat(origin.lng, origin.lat) &&
-      isValidLngLat(dest.lng, dest.lat)
-    ) {
-      const fallbackPath = [
-        [origin.lng, origin.lat],
-        [dest.lng, dest.lat],
-      ]
-      // 先绘制直线，再异步尝试沿道路贴合
-      if (polyline.value) {
-        polyline.value.setPath(fallbackPath)
-      } else {
-        polyline.value = new AMap.Polyline({
-          path: fallbackPath,
-          isOutline: true,
-          outlineColor: '#ffffff',
-          borderWeight: 4,
-          strokeColor: '#1677ff',
-          strokeOpacity: 1,
-          strokeWeight: 8,
-          lineJoin: 'round',
-          lineCap: 'round',
-          zIndex: 50,
-        })
-        map.value.add(polyline.value)
-      }
-      if (driving.value) {
-        buildRoadAlignedPath(fallbackPath, AMap)
-          .then((roadPath) => {
-            if (seq !== routeRenderSeq) return
-            if (roadPath.length >= 2) {
-              polyline.value?.setPath(roadPath)
+  const path = downsamplePath(rawPath, 5)
+
+  // 2. 路径点过少（可能是直线插值）：尝试前端 Driving 优化
+  if (path.length < 5 && props.route.length >= 2) {
+      const origin = normalizePoint(props.route[0])
+      const dest = normalizePoint(props.route[props.route.length - 1])
+      if (origin && dest && driving.value) {
+           driving.value.search(
+            new AMap.LngLat(origin.lng, origin.lat),
+            new AMap.LngLat(dest.lng, dest.lat),
+            (status: string, result: any) => {
+                if (status === 'complete' && result.routes && result.routes.length) {
+                    const roadPath = normalizeDrivingPath(result.routes?.[0]?.path)
+                    drawPolyline(roadPath.length >= 2 ? roadPath : path, AMap, force)
+                } else {
+                    drawPolyline(path, AMap, force)
+                }
             }
-          })
-          .catch(() => {})
+           )
+           return
       }
-      if (props.autoFit) {
-        try {
-          safeSetBounds(
-            [fallbackPath[0], fallbackPath[1]],
-            [40, 40, 40, 40],
-          )
-        } catch (e) {
-          // ignore
-        }
-      }
-      return
-    }
-    if (polyline.value) {
-      map.value.remove(polyline.value)
-      polyline.value = null
-    }
-    return
   }
 
+  // 3. 正常绘制后端返回的路径
+  drawPolyline(path, AMap, force)
+}
+
+const drawStraightLine = (origin: any, dest: any, AMap: any, force: boolean) => {
+    const fallbackPath = [[origin.lng, origin.lat], [dest.lng, dest.lat]]
+    drawPolyline(fallbackPath, AMap, force, true)
+}
+
+const drawPolyline = (path: any[], AMap: any, force: boolean, isDashed = false) => {
   if (polyline.value) {
-    polyline.value.setPath(path)
-  } else {
-    // 创建沿道路正上方飞行的路径线（加粗加亮便于预览）
-    polyline.value = new AMap.Polyline({
-      path: path,
-      isOutline: true,
-      outlineColor: '#ffffff',
-      borderWeight: 4,
-      strokeColor: '#1677ff',
-      strokeOpacity: 1,
-      strokeWeight: 8,
-      lineJoin: 'round',
-      lineCap: 'round',
-      zIndex: 50,
-      showDir: true,
-      dirColor: '#1677ff',
-      dirImg: 'https://webapi.amap.com/images/dir.png',
-      strokeStyle: 'solid',
-    })
-    map.value.add(polyline.value)
+    map.value.remove(polyline.value)
+    polyline.value = null
   }
+  
+  const safePath: number[][] = (Array.isArray(path) ? path : [])
+    .map((p: any) => [Number(p?.[0] ?? p?.lng ?? p?.getLng?.()), Number(p?.[1] ?? p?.lat ?? p?.getLat?.())])
+    .filter((p: any) => isValidLngLat(p?.[0], p?.[1]))
+  if (safePath.length < 2) return
 
-  // 先立即显示完整路径，再异步尝试路网贴合（避免路径闪烁或不可见）
-  if (path.length >= 2 && driving.value) {
-    buildRoadAlignedPath(path, AMap)
-      .then((roadPath) => {
-        if (seq !== routeRenderSeq) return
-        if (roadPath.length >= 2) {
-          polyline.value?.setPath(roadPath)
-        }
-      })
-      .catch(() => {})
-  }
+  polyline.value = new AMap.Polyline({
+    path: safePath,
+    isOutline: true,
+    outlineColor: '#ffffff',
+    borderWeight: 2,
+    strokeColor: isDashed ? '#ff4d4f' : '#1890ff', 
+    strokeOpacity: 0.9,
+    strokeWeight: 6,
+    lineJoin: 'round',
+    lineCap: 'round',
+    zIndex: 100,
+    showDir: true,
+    dirColor: '#ffffff',
+    strokeStyle: isDashed ? 'dashed' : 'solid',
+  })
+  map.value.add(polyline.value)
 
-  // 自动调整视野，包含路径和标记点
-  if (path.length > 0 && props.autoFit) {
-    const points: number[][] = []
-    path.forEach((p: number[]) => {
-      if (!isValidLngLat(p?.[0], p?.[1])) return
-      points.push([p[0], p[1]])
-    })
-    if (props.markers && props.markers.length > 0) {
-      props.markers.forEach((m) => {
-        const normalized = normalizePoint({ lng: m.lng, lat: m.lat })
-        if (!normalized || !isValidLngLat(normalized.lng, normalized.lat)) return
+  // 强制触发一次视野调整
+  if (props.autoFit || force) {
+    setTimeout(() => {
+      if (!polyline.value) return
+      const points: number[][] = [...safePath]
+      ;(props.markers || []).forEach((m: any) => {
+        const normalized = normalizePoint({ lng: m?.lng, lat: m?.lat })
+        if (!normalized) return
         points.push([normalized.lng, normalized.lat])
       })
-    }
-    if (points.length > 0) {
-      safeSetBounds(points, [50, 50, 50, 50])
-    }
+      safeSetBounds(points, [50, 50, 50, 50], undefined, force)
+    }, 100)
   }
+
   // 路径绘制后触发 resize，确保地图正确渲染
   nextTick(() => {
     try {
@@ -611,6 +701,7 @@ const updateRoute = async (): Promise<void> => {
       // ignore
     }
   })
+  ensureInteractive()
 }
 
 /** 路径绘制动画：沿路径逐步显示 */
@@ -640,7 +731,8 @@ const animateRoute = (path: number[][]): void => {
  * 更新实时轨迹
  */
 const updateTrack = (trackPoints: RoutePoint[]): void => {
-  if (!map.value || !window.AMap || trackPoints.length === 0) {
+  const AMap = (window as any).AMap
+  if (!map.value || !AMap || trackPoints.length === 0) {
     return
   }
 
@@ -656,7 +748,7 @@ const updateTrack = (trackPoints: RoutePoint[]): void => {
   if (trackPolyline.value) {
     trackPolyline.value.setPath(path)
   } else {
-    trackPolyline.value = new window.AMap.Polyline({
+    trackPolyline.value = new AMap.Polyline({
       path: path,
       strokeColor: '#9bb3d3',
       strokeOpacity: 0.6,
@@ -673,7 +765,8 @@ const updateTrack = (trackPoints: RoutePoint[]): void => {
  * 更新轨迹回放高亮段
  */
 const updateReplaySegment = (trackPoints: RoutePoint[]): void => {
-  if (!map.value || !window.AMap || trackPoints.length === 0) {
+  const AMap = (window as any).AMap
+  if (!map.value || !AMap || trackPoints.length === 0) {
     return
   }
   const path = downsamplePath(
@@ -687,7 +780,7 @@ const updateReplaySegment = (trackPoints: RoutePoint[]): void => {
   if (replayPolyline.value) {
     replayPolyline.value.setPath(path)
   } else {
-    replayPolyline.value = new window.AMap.Polyline({
+    replayPolyline.value = new AMap.Polyline({
       path: path,
       strokeColor: '#ff4d4f',
       strokeOpacity: 0.9,
@@ -801,10 +894,17 @@ const locateNow = (): void => {
     const targetZoom = zoom ?? getZoomByAccuracy(accuracy)
     map.value.setZoomAndCenter(targetZoom, [lng, lat])
     if (message) emit('locate-progress', message)
-    emit('located', { lng, lat })
+    let emitLng = lng
+    let emitLat = lat
+    if (props.coordType === 'wgs84') {
+      const wgs = gcj02ToWgs84(lng, lat)
+      emitLng = wgs.lng
+      emitLat = wgs.lat
+    }
+    emit('located', { lng: emitLng, lat: emitLat })
     void reverseGeocode(lng, lat).then((address) => {
       if (address) {
-        emit('located', { lng, lat, address })
+        emit('located', { lng: emitLng, lat: emitLat, address })
       }
     })
     if (final) {
@@ -828,7 +928,14 @@ const locateNow = (): void => {
         const cached = JSON.parse(raw)
         if (isValidLngLat(cached?.lng, cached?.lat)) {
           map.value.setZoomAndCenter(16, [cached.lng, cached.lat])
-          emit('located', { lng: cached.lng, lat: cached.lat })
+          let emitLng = cached.lng
+          let emitLat = cached.lat
+          if (props.coordType === 'wgs84') {
+            const wgs = gcj02ToWgs84(cached.lng, cached.lat)
+            emitLng = wgs.lng
+            emitLat = wgs.lat
+          }
+          emit('located', { lng: emitLng, lat: emitLat })
           emit('locate-error', '已回退到最近一次定位')
           fallbackUsed = true
         }
@@ -993,6 +1100,10 @@ const retry = (): void => {
   initMap()
 }
 
+const refreshRoute = (forceFit = false): void => {
+  safeUpdate(forceFit, 'expose.refreshRoute')
+}
+
 const isValidLngLat = (lng?: number | string, lat?: number | string): boolean => {
   if (lng === undefined || lat === undefined) return false
   const nLng = Number(lng)
@@ -1006,27 +1117,64 @@ const isSamePoint = (a: number[], b: number[]): boolean => {
   return Math.abs(a[0] - b[0]) < 1e-6 && Math.abs(a[1] - b[1]) < 1e-6
 }
 
-const safeSetBounds = (points: number[][], padding: number[], fallbackZoom?: number): void => {
+const safeSetBounds = (points: number[][], padding: number[], fallbackZoom?: number, force = false): void => {
   if (!map.value || !(window as any).AMap) return
+  // 仅在 props.autoFit 为 true 或者 force 为 true 时执行
+  if (!props.autoFit && !force) return
+  if (!mapReady.value) return
+  if (userInteracted && !force) return
+  try {
+    const size = map.value.getSize?.()
+    if (!size || !Number.isFinite(size.width) || !Number.isFinite(size.height) || size.width <= 0 || size.height <= 0) {
+      return
+    }
+  } catch {
+    return
+  }
+
   const AMap = (window as any).AMap
   const valid = points
     .map((p) => [Number(p?.[0]), Number(p?.[1])])
     .filter((p) => isValidLngLat(p?.[0], p?.[1]))
+
   if (valid.length === 0) return
+
   const first = valid[0]
   const allSame = valid.every((p) => isSamePoint(p, first))
+
   if (allSame) {
     map.value.setCenter(first)
-    map.value.setZoom(fallbackZoom || props.zoom || 12)
+    try {
+      const z = typeof map.value.getZoom === 'function' ? map.value.getZoom() : undefined
+      map.value.setZoom(fallbackZoom || z || props.zoom || 12)
+    } catch {}
     return
   }
-  const bounds = new AMap.Bounds()
-  valid.forEach((p) => bounds.extend(p))
+
   try {
-    map.value.setBounds(bounds, false, padding)
+    let minLng = valid[0][0]
+    let maxLng = valid[0][0]
+    let minLat = valid[0][1]
+    let maxLat = valid[0][1]
+    for (let i = 1; i < valid.length; i++) {
+      const lng = valid[i][0]
+      const lat = valid[i][1]
+      if (lng < minLng) minLng = lng
+      if (lng > maxLng) maxLng = lng
+      if (lat < minLat) minLat = lat
+      if (lat > maxLat) maxLat = lat
+    }
+    const bounds = new AMap.Bounds([minLng, minLat], [maxLng, maxLat])
+    dbgFitCount++
+    dbgLastFit = { time: Date.now(), type: 'setBounds', points: valid.length, force }
+    dbg('fit', dbgLastFit)
+    map.value.setBounds(bounds)
+    ensureInteractive()
   } catch {
-    map.value.setCenter(first)
-    map.value.setZoom(fallbackZoom || props.zoom || 12)
+    try {
+      map.value.setCenter(first)
+      ensureInteractive()
+    } catch {}
   }
 }
 
@@ -1043,10 +1191,25 @@ const reverseGeocode = (lng: number, lat: number): Promise<string> => {
   })
 }
 
-const normalizePoint = (point: RoutePoint): RoutePoint | null => {
+const normalizePoint = (point: RoutePoint | any): RoutePoint | null => {
   if (!point) return null
-  const lng = Number((point as any).lng)
-  const lat = Number((point as any).lat)
+  const rawLng = Array.isArray(point)
+    ? point[0]
+    : (point as any).lng ??
+      (point as any).longitude ??
+      (point as any).lon ??
+      (point as any).x ??
+      (point as any).lngLat?.lng ??
+      (point as any).lnglat?.lng
+  const rawLat = Array.isArray(point)
+    ? point[1]
+    : (point as any).lat ??
+      (point as any).latitude ??
+      (point as any).y ??
+      (point as any).lngLat?.lat ??
+      (point as any).lnglat?.lat
+  const lng = Number(rawLng)
+  const lat = Number(rawLat)
   if (!isValidLngLat(lng, lat)) return null
   if (props.coordType === 'gcj02') {
     return { ...point, lng, lat }
@@ -1212,6 +1375,25 @@ const wgs84ToGcj02 = (lng: number, lat: number): { lng: number; lat: number } =>
   return { lng: mgLng, lat: mgLat }
 }
 
+const gcj02ToWgs84 = (lng: number, lat: number): { lng: number; lat: number } => {
+  if (outOfChina(lng, lat)) {
+    return { lng, lat }
+  }
+  const a = 6378245.0
+  const ee = 0.00669342162296594323
+  let dLat = transformLat(lng - 105.0, lat - 35.0)
+  let dLng = transformLng(lng - 105.0, lat - 35.0)
+  const radLat = (lat / 180.0) * Math.PI
+  let magic = Math.sin(radLat)
+  magic = 1 - ee * magic * magic
+  const sqrtMagic = Math.sqrt(magic)
+  dLat = (dLat * 180.0) / (((a * (1 - ee)) / (magic * sqrtMagic)) * Math.PI)
+  dLng = (dLng * 180.0) / ((a / sqrtMagic) * Math.cos(radLat) * Math.PI)
+  const mgLat = lat + dLat
+  const mgLng = lng + dLng
+  return { lng: lng * 2 - mgLng, lat: lat * 2 - mgLat }
+}
+
 const bd09ToGcj02 = (lng: number, lat: number): { lng: number; lat: number } => {
   const x = lng - 0.0065
   const y = lat - 0.006
@@ -1221,11 +1403,21 @@ const bd09ToGcj02 = (lng: number, lat: number): { lng: number; lat: number } => 
 }
 
 // 监听属性变化
-watch(() => props.markers, updateMarkers, { deep: true })
+watch(markersKey, () => {
+  userInteracted = false
+  safeUpdate(false, 'watch.markersKey')
+})
 watch(
   () => props.center,
   () => {
     if (props.center && map.value) {
+      // 仅当没有标记和路径时，才允许通过 center 调整视野，避免单点覆盖
+      const markerCount = props.markers?.length || 0
+      const routeCount = props.route?.length || 0
+      // 只要有任何标记或路线，就绝对禁止通过 center 属性移动地图
+      if (markerCount > 0 || routeCount > 0) {
+        return
+      }
       const normalized = normalizePoint(props.center as RoutePoint)
       if (normalized && isValidLngLat(normalized.lng, normalized.lat)) {
         try {
@@ -1238,13 +1430,7 @@ watch(
   },
   { deep: true },
 )
-watch(
-  () => [props.route, props.markers],
-  () => {
-    if (map.value) void updateRoute()
-  },
-  { deep: true, immediate: true },
-)
+watch(routeKey, () => safeUpdate(false, 'watch.routeKey'))
 
 onMounted(() => {
   nextTick(() => {
@@ -1273,10 +1459,19 @@ onBeforeUnmount(() => {
 defineExpose({
   updateTrack,
   updateReplaySegment,
+  refreshRoute,
   zoomIn,
   zoomOut,
   resetView,
   locateNow,
+  getDebugState: () => ({
+    updateCount: dbgUpdateCount,
+    fitCount: dbgFitCount,
+    lastUpdate: dbgLastUpdate,
+    lastFit: dbgLastFit,
+    markersKey: markersKey.value,
+    routeKey: routeKey.value,
+  }),
 })
 </script>
 
@@ -1297,12 +1492,25 @@ defineExpose({
   border-radius: 8px;
   overflow: hidden;
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+  pointer-events: auto;
+  touch-action: auto;
 }
 
 .map {
   width: 100%;
   height: 100%;
   border-radius: 8px;
+  pointer-events: auto;
+  touch-action: auto;
+}
+
+.map-wrapper :deep(.el-loading-mask),
+.map-wrapper :deep(.el-loading-spinner) {
+  pointer-events: none;
+}
+
+.map :deep(.amap-container) {
+  touch-action: auto;
 }
 
 .error-mask {

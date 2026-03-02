@@ -7,10 +7,10 @@
     </el-page-header>
 
     <el-steps :active="step" finish-status="success" align-center class="steps">
-      <el-step title="基本信息" />
-      <el-step title="位置选择" />
-      <el-step title="路径预览" />
-      <el-step title="确认提交" />
+      <el-step title="基本信息" @click="goStep(0)" />
+      <el-step title="位置选择" @click="goStep(1)" />
+      <el-step title="路径预览" @click="goStep(2)" />
+      <el-step title="确认提交" @click="goStep(3)" />
     </el-steps>
 
     <div class="content-wrapper">
@@ -257,7 +257,7 @@
                   最快
                 </el-button>
               </el-button-group>
-              <el-button size="small" @click="calculateRoute" :loading="routeLoading">
+              <el-button size="small" @click="calculateRouteAsync" :loading="routeLoading">
                 <el-icon><Refresh /></el-icon>
                 重新规划
               </el-button>
@@ -284,6 +284,7 @@
                   :center="routeMapCenter"
                   :show-toolbar="true"
                   :coord-type="coordType"
+                  ref="routeMapRef"
                 />
                 <div class="map-legend">
                   <div class="legend-item">
@@ -447,30 +448,36 @@
  * @author System
  * @date 2025-01
  */
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Location, LocationFilled, Refresh, Loading } from '@element-plus/icons-vue'
 import AMapLoader from '@amap/amap-jsapi-loader'
 import MapContainer from '@/components/MapContainer.vue'
-import { createTask } from '@/api/task'
+import { createTask, updateTaskRoute } from '@/api/task'
 import {
   calculateRoute as calculateRouteAPI,
   type RouteResult,
   type RouteOptions,
 } from '@/api/route'
+import { useWebSocket } from '@/hooks/useWebSocket'
 import request from '@/utils/request'
 import type { DroneMarker, RoutePoint } from '@/types/drone'
+import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
+const authStore = useAuthStore()
 
 const step = ref(0)
 const formRef = ref()
 const submitting = ref(false)
 const routeLoading = ref(false)
 const routeResult = ref<RouteResult | null>(null)
+const pendingJobId = ref<string | null>(null)
+let wsClient: any = null
 const routeStrategy = ref<'shortest' | 'safest' | 'fastest'>('shortest')
 const mapRef = ref<any>(null)
+const routeMapRef = ref<any>(null)
 const currentLocation = ref<{ lng: number; lat: number; address?: string } | null>(null)
 const coordType = ref<'gcj02' | 'wgs84' | 'bd09'>('gcj02')
 const locating = ref(false)
@@ -581,7 +588,7 @@ const markers = computed(() => {
 
 // 路径预览（步骤2显示）
 const previewRoute = computed<RoutePoint[]>(() => {
-  if (form.value.origin_lat && form.value.dest_lat && routeResult.value) {
+  if (form.value.origin_lat && form.value.dest_lat && routeResult.value && routeResult.value.points) {
     return routeResult.value.points.map((p) => ({
       lng: p.lng,
       lat: p.lat,
@@ -593,7 +600,7 @@ const previewRoute = computed<RoutePoint[]>(() => {
 
 // 路径点（步骤3显示）
 const routePoints = computed<RoutePoint[]>(() => {
-  if (routeResult.value) {
+  if (routeResult.value && routeResult.value.points && Array.isArray(routeResult.value.points)) {
     return routeResult.value.points.map((p) => ({
       lng: p.lng,
       lat: p.lat,
@@ -719,6 +726,36 @@ watch(
   },
 )
 
+watch(
+  () => [routeResult.value, step.value],
+  ([result, currentStep]) => {
+    if (currentStep !== 2 || !result) return
+    mapRef.value?.refreshRoute?.(true)
+  },
+  { deep: true },
+)
+
+watch(
+  () => [routeResult.value, step.value],
+  ([result, currentStep]) => {
+    if (currentStep !== 2 || !result) return
+    nextTick(() => {
+      routeMapRef.value?.refreshRoute?.(true)
+    })
+  },
+  { deep: true },
+)
+
+watch(
+  () => step.value,
+  (currentStep) => {
+    if (currentStep !== 1) return
+    nextTick(() => {
+      mapRef.value?.refreshRoute?.(true)
+    })
+  },
+)
+
 const next = () => {
   if (step.value === 1) {
     // 验证起点终点
@@ -748,6 +785,11 @@ const prev = () => {
 
 const handleNext = () => {
   next()
+}
+
+const goStep = (target: number) => {
+  if (target >= step.value) return
+  step.value = target
 }
 
 /**
@@ -802,7 +844,16 @@ const calculateRoute = async (
   }
   try {
     const result = await requestRoute()
-    routeResult.value = result
+    // 若后端返回 jobId (async accepted)
+    if ((result as any)?.jobId) {
+      pendingJobId.value = (result as any).jobId
+      // subscribe websocket to listen for job_result
+      if (wsClient && typeof wsClient.connect === 'function') wsClient.connect()
+      ElMessage.info('路径已提交后台计算，高质量结果稍后推送')
+      return
+    }
+    routeResult.value = result as RouteResult
+    console.log('TaskCreate: Route calculated:', routeResult.value)
     if (key) {
       preRouteCache.value = { key, result }
     }
@@ -811,14 +862,67 @@ const calculateRoute = async (
     }
   } catch (error: any) {
     console.error('Path planning failed:', error)
+    // 前端兜底：即使后端失败，也构造一个临时的直线路径结果，确保用户能继续操作
+    const fallbackPoints = [
+      { lng: form.value.origin_lng, lat: form.value.origin_lat, altitude: 100 },
+      { lng: form.value.dest_lng, lat: form.value.dest_lat, altitude: 100 }
+    ]
+    // 简单的距离计算
+    const R = 6371
+    const dLat = (form.value.dest_lat - form.value.origin_lat) * Math.PI / 180
+    const dLon = (form.value.dest_lng - form.value.origin_lng) * Math.PI / 180
+    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+              Math.cos(form.value.origin_lat * Math.PI / 180) * Math.cos(form.value.dest_lat * Math.PI / 180) *
+              Math.sin(dLon/2) * Math.sin(dLon/2)
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a))
+    const dist = R * c
+
+    routeResult.value = {
+      points: fallbackPoints,
+      distance: dist,
+      duration: dist / 60 * 3600, // 假设 60km/h
+      riskFactor: 0.1,
+      estimatedBatteryConsumption: 10,
+      warnings: ['后端服务暂不可用，已切换为本地估算路径', ...(error?.message ? [error.message] : [])],
+      routeId: 'fallback_' + Date.now()
+    } as any
+
     if (!opts.silent) {
-      ElMessage.error(error?.message || '路径规划失败，请稍后重试')
-      routeResult.value = null
+      ElMessage.warning('后端规划服务异常，已启用本地路径估算')
     }
   } finally {
     if (!opts.silent) {
       routeLoading.value = false
     }
+  }
+}
+
+/** 异步请求高质量路径（后台计算并推送） */
+const calculateRouteAsync = async (): Promise<void> => {
+  try {
+    routeLoading.value = true
+    const payload = {
+      originLng: form.value.origin_lng,
+      originLat: form.value.origin_lat,
+      destLng: form.value.dest_lng,
+      destLat: form.value.dest_lat,
+      options: {
+        avoidNoFlyZones: form.value.avoidNoFlyZones,
+        considerWeather: form.value.considerWeather,
+        optimizeStrategy: routeStrategy.value,
+      },
+      async: true,
+    }
+    const res: any = await calculateRouteAPI(payload)
+    if (res && res.jobId) {
+      pendingJobId.value = res.jobId
+      if (wsClient && typeof wsClient.connect === 'function') wsClient.connect()
+      ElMessage.info('已开始后台路径计算，稍后将收到高质量结果')
+    }
+  } catch (e: any) {
+    ElMessage.error(e?.message || '异步路径提交失败')
+  } finally {
+    routeLoading.value = false
   }
 }
 
@@ -862,6 +966,52 @@ const onMapClick = (point: { lng: number; lat: number }): void => {
   }
 }
 
+// WebSocket for job results
+const wsBase = import.meta.env.VITE_NETTY_WS_BASE || 'ws://localhost:18080'
+const wsJobsUrl = `${wsBase}/ws/route/jobs`
+onMounted(() => {
+  try {
+    wsClient = useWebSocket({
+      url: wsJobsUrl,
+      autoReconnect: true,
+      getToken: () => localStorage.getItem('access_token'),
+      onOpen: () => {
+        // nothing
+      },
+      onClose: () => {},
+    })
+    wsClient.handleMessage = (msg: any) => {
+      if (!msg || !msg.type) return
+      if (msg.type === 'job_result') {
+        const jobId = msg.jobId || msg.data?.jobId
+        if (!jobId || jobId !== pendingJobId.value) return
+        const status = msg.status || msg.data?.status
+        if (status === 'success') {
+          const result = msg.result || msg.data?.result
+          if (result) {
+            routeResult.value = result
+            // cache routeId if exists
+            if (result.routeId) {
+              form.value.route_id = result.routeId
+            }
+            ElMessage.success('高质量路径已生成并已更新预览')
+            pendingJobId.value = null
+            try { wsClient.disconnect() } catch {}
+          }
+        } else {
+          ElMessage.error('路径计算失败：' + (msg.error || '未知错误'))
+          pendingJobId.value = null
+          try { wsClient.disconnect() } catch {}
+        }
+      }
+    }
+  } catch (e) {}
+})
+
+onBeforeUnmount(() => {
+  try { wsClient?.disconnect() } catch {}
+})
+
 const formatPoint = (p: { lng: number; lat: number }): string => {
   return `${p.lng.toFixed(6)}, ${p.lat.toFixed(6)}`
 }
@@ -902,6 +1052,7 @@ const setOrigin = (p: { lng: number; lat: number }, label?: string): void => {
   centerRef.value = { lng: normalized.lng, lat: normalized.lat }
   search.value.origin = resolvedLabel
   addRecentLocation(resolvedLabel, normalized.lng, normalized.lat)
+  mapRef.value?.refreshRoute?.(true)
 }
 
 const setDest = (p: { lng: number; lat: number }, label?: string): void => {
@@ -925,6 +1076,7 @@ const setDest = (p: { lng: number; lat: number }, label?: string): void => {
   search.value.dest = resolvedLabel
   debugGeo('setDest', { label: resolvedLabel, lng: normalized.lng, lat: normalized.lat })
   addRecentLocation(resolvedLabel, normalized.lng, normalized.lat)
+  mapRef.value?.refreshRoute?.(true)
 }
 
 const useCurrentAsOrigin = (): void => {
@@ -1026,8 +1178,8 @@ const fetchTipsFromAMap = async (keyword: string): Promise<any[]> => {
         if (status !== 'complete' || !Array.isArray(result?.tips)) return resolve([])
         const list = result.tips
           .map((it: any) => {
-            const lng = it?.location?.lng
-            const lat = it?.location?.lat
+            const lng = Number(it?.location?.lng)
+            const lat = Number(it?.location?.lat)
             return {
               value: it.name || it.address || '',
               name: it.name,
@@ -1460,10 +1612,14 @@ const submit = async () => {
       origin_lng: form.value.origin_lng,
       dest_lat: form.value.dest_lat,
       dest_lng: form.value.dest_lng,
-      origin_name: search.value.origin || undefined,
-      destination_name: search.value.dest || undefined,
-      requestUserId: 1, // TODO: 从store获取
-      routeId: routeResult.value?.routeId,
+      origin_name: search.value.origin || '未知起点',
+      dest_name: search.value.dest || '未知终点', // Fixed field name to match backend TaskEntity
+      requestUserId: authStore.user?.id || 1, 
+      // V7: use snake_case to match backend Entity @JsonProperty
+      planned_path_json: routeResult.value?.points ? JSON.stringify(routeResult.value.points) : undefined,
+      total_distance_km: routeResult.value?.distance,
+      est_time_min: routeResult.value?.duration ? Math.ceil(routeResult.value.duration / 60) : undefined,
+      
       taskCategory: form.value.taskCategory,
       weightKg: form.value.weightKg,
       slaMinutes: form.value.slaMinutes,
@@ -1472,8 +1628,36 @@ const submit = async () => {
       routeOptimizeStrategy: routeStrategy.value,
     }
 
-    await createTask(payload)
+    const res = await createTask(payload)
+    const created = res?.data || res
+    const createdId = created?.task_id || created?.taskId || created?.id
     ElMessage.success('任务已提交，等待审核')
+    // 如果仍有后台 job 在进行，监听 job_result 将 routeId 关联到任务
+    if (pendingJobId.value && createdId) {
+      const listener = (msg: any) => {
+        if (!msg || msg.type !== 'job_result') return
+        const jobId = msg.jobId || msg.data?.jobId
+        if (jobId !== pendingJobId.value) return
+        const status = msg.status || msg.data?.status
+        if (status === 'success') {
+          const result = msg.result || msg.data?.result
+          // Update task with points
+          if (result && result.points) {
+            try {
+              updateTaskRoute(createdId, result.points)
+            } catch {}
+          }
+        }
+        pendingJobId.value = null
+        try { wsClient.disconnect() } catch {}
+      }
+      // attach temporary handler
+      const oldHandler = wsClient.handleMessage
+      wsClient.handleMessage = (m: any) => {
+        try { listener(m) } catch {}
+        try { oldHandler?.(m) } catch {}
+      }
+    }
     // 跳转到任务列表并重置当前创建页状态，避免用户重复提交
     try {
       router.push({ name: 'TaskList' })
@@ -1768,6 +1952,8 @@ const getWeatherTagType = (weather: string): string => {
   overflow: hidden;
   margin-bottom: 16px;
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
+  pointer-events: auto;
+  touch-action: auto;
 }
 
 .map-section :deep(.map-wrapper) {

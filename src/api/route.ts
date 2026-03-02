@@ -35,6 +35,8 @@ export interface RouteCalculateRequest {
   destLat: number
   /** 路径规划选项 */
   options?: RouteOptions
+  /** 是否异步计算（返回 jobId） */
+  async?: boolean
 }
 
 /**
@@ -70,10 +72,15 @@ export interface RouteResult {
  * @param params 路径规划参数
  * @returns 路径规划结果
  */
-export async function calculateRoute(params: RouteCalculateRequest): Promise<RouteResult> {
+export async function calculateRoute(params: RouteCalculateRequest): Promise<RouteResult | { jobId: string }> {
   const res: any = await request.post('/route/calculate', params)
   const data = res?.data || res
-  
+
+  // 如果后端返回 jobId（async accepted），直接返回 job info
+  if (data && data.jobId) {
+    return { jobId: data.jobId }
+  }
+
   // 转换路径点格式
   if (data.points && Array.isArray(data.points)) {
     data.points = data.points.map((p: any) => ({
@@ -85,7 +92,7 @@ export async function calculateRoute(params: RouteCalculateRequest): Promise<Rou
   // 兼容后端字段名 distanceKm/durationSeconds
   data.distance = data.distance ?? data.distanceKm ?? 0
   data.duration = data.duration ?? data.durationSeconds ?? 0
-  
+
   return data
 }
 

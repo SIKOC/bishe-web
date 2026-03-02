@@ -21,7 +21,9 @@ export const useAuthStore = defineStore('auth', () => {
     }
     const data = res?.data ?? res
     accessToken.value = data?.token || null
-    user.value = data ? { id: data?.useId ?? data?.userId ?? null, username: data?.username || '' } : null
+    // V7: user info is in data.user object
+    const u = data?.user || data
+    user.value = u ? { id: u.userId ?? u.useId ?? u.id ?? null, username: u.username ?? u.userName ?? '' } : null
     roles.value = []
     if (accessToken.value) localStorage.setItem('access_token', accessToken.value)
     if (user.value) localStorage.setItem('user', JSON.stringify(user.value))

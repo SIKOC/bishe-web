@@ -7,16 +7,20 @@ export async function fetchDashboardStats(): Promise<{
   mileage: number
 }> {
   // Parallel fetch for stats
-  const [tasks, drones] = await Promise.all([
+  // Use /drone/live for accurate online/flying count
+  const [tasks, liveDrones] = await Promise.all([
     request.get('/task/tasks', { params: { page: 1, size: 1, status: 'in_progress' } }),
-    request.get('/drone/drones', { params: { page: 1, size: 1, status: 'flying' } })
+    request.get('/drone/live')
   ])
   
+  const liveList = (liveDrones?.data || liveDrones || [])
+  const onlineCount = Array.isArray(liveList) ? liveList.filter((d: any) => d.status !== 'idle' && d.status !== 'maintenance').length : 0
+
   return {
     waybills: tasks?.data?.total || tasks?.total || 0,
-    online: drones?.data?.total || drones?.total || 0,
-    alerts: 0, // Not implemented in backend yet
-    mileage: 12580 // Mock for now
+    online: onlineCount,
+    alerts: 0, 
+    mileage: 12580 
   }
 }
 

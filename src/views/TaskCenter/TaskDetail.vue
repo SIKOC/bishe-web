@@ -47,11 +47,18 @@
 
           <div class="action-buttons">
             <el-button
-              v-if="detail.status === 'pending' && isAdmin"
+              v-if="['pending', 'pending_review', 'pending_approval', '待调度', '待审核'].includes(detail.status) && isAdmin"
               type="primary"
               @click="showAssignDialog = true"
             >
               分配无人机
+            </el-button>
+            <el-button
+              v-if="detail.status === 'approved' && isAdmin"
+              type="success"
+              @click="handleTakeoff"
+            >
+              开始执行
             </el-button>
             <el-button
               v-if="detail.status === 'in_progress'"
@@ -73,6 +80,9 @@
         <!-- 任务进度 -->
         <el-card shadow="hover" class="progress-card" style="margin-top: 16px">
           <template #header>任务进度</template>
+          <div style="text-align: center; margin-bottom: 20px;">
+            <span class="progress-time" v-if="detail.requestTime">创建于: {{ formatDateTime(detail.requestTime) }}</span>
+          </div>
           <el-progress
             :percentage="progress"
             :status="getProgressStatus()"
@@ -161,25 +171,29 @@
               <div class="trip-point">
                 <div class="dot start"></div>
                 <div class="label">起点</div>
-                <div class="value">{{ originText }}</div>
+                <div class="value">{{ detail.originName || detail.origin_name || originText }}</div>
               </div>
               <div class="trip-point">
                 <div class="dot end"></div>
                 <div class="label">终点</div>
-                <div class="value">{{ destText }}</div>
+                <div class="value">{{ detail.destName || detail.dest_name || destText }}</div>
               </div>
               <div class="trip-metrics">
                 <div class="metric">
-                  <div class="metric-label">ETA</div>
+                  <div class="metric-label">预计到达</div>
                   <div class="metric-value">{{ etaText }}</div>
                 </div>
                 <div class="metric">
-                  <div class="metric-label">倒计时</div>
+                  <div class="metric-label">剩余时间</div>
                   <div class="metric-value">{{ etaCountdownText }}</div>
                 </div>
                 <div class="metric">
                   <div class="metric-label">剩余距离</div>
                   <div class="metric-value">{{ remainingDistanceText }}</div>
+                </div>
+                <div class="metric">
+                  <div class="metric-label">总距离</div>
+                  <div class="metric-value">{{ detail.totalDistanceKm ? detail.totalDistanceKm.toFixed(2) + ' km' : '-' }}</div>
                 </div>
               </div>
             </div>
@@ -331,9 +345,9 @@
           <el-select v-model="assignForm.droneId" placeholder="请选择无人机" style="width: 100%">
             <el-option
               v-for="drone in availableDrones"
-              :key="drone.droneId"
-              :label="`${drone.droneCode} (电量: ${drone.batteryLevel}%)`"
-              :value="drone.droneId"
+              :key="drone.id"
+              :label="`${drone.model} (电量: ${drone.battery}%)`"
+              :value="drone.id"
             />
           </el-select>
         </el-form-item>
@@ -359,7 +373,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Check, Clock, CircleCheck, CircleClose, Refresh } from '@element-plus/icons-vue'
 import MapContainer from '@/components/MapContainer.vue'
 import { fetchTaskDetail, assignTask, updateTaskStatus, getTaskTrack } from '@/api/task'
-import { fetchDrones } from '@/api/drones'
+import { fetchDrones, fetchDrone } from '@/api/drones'
 import { getRouteDetail } from '@/api/route'
 import { useWebSocket } from '@/hooks/useWebSocket'
 import request from '@/utils/request'
@@ -380,7 +394,11 @@ const detail = ref<any>({
   actualArrivalTime: '',
   assignedDroneId: null,
   droneCode: '',
-  remarks: ''
+  remarks: '',
+  originName: '',
+  destName: '',
+  totalDistanceKm: 0,
+  estTimeMin: 0
 })
 
 const droneMarkers = ref<DroneMarker[]>([])
@@ -420,7 +438,7 @@ const originText = computed(() => {
     detail.value.originName ||
     detail.value.originAddress ||
     detail.value.origin ||
-    formatCoord(detail.value.origin_lng, detail.value.origin_lat)
+    (detail.value.origin_lng && detail.value.origin_lat ? formatCoord(detail.value.origin_lng, detail.value.origin_lat) : '-')
   )
 })
 const destText = computed(() => {
@@ -428,11 +446,16 @@ const destText = computed(() => {
     detail.value.destName ||
     detail.value.destAddress ||
     detail.value.destination ||
-    formatCoord(detail.value.dest_lng, detail.value.dest_lat)
+    (detail.value.dest_lng && detail.value.dest_lat ? formatCoord(detail.value.dest_lng, detail.value.dest_lat) : '-')
   )
 })
 
 const remainingDistanceKm = computed(() => {
+  // 还没开始或者没有无人机位置，显示总里程
+  if ((!currentDrone.value || detail.value.status === 'pending' || detail.value.status === 'approved') && routeInfo.value?.distance) {
+     return routeInfo.value.distance
+  }
+  
   if (!currentDrone.value || routePoints.value.length < 2) return 0
   const idx = findClosestRouteIndex(currentDrone.value, routePoints.value)
   if (idx >= routePoints.value.length - 1) return 0
@@ -449,13 +472,20 @@ const remainingDistanceText = computed(() => {
 
 const etaText = computed(() => {
   if (estimatedArrivalTime.value) return formatDateTime(estimatedArrivalTime.value)
-  if (!currentDrone.value) return '-'
-  const speed = currentDrone.value.speed
-  if (speed && remainingDistanceKm.value > 0) {
-    const seconds = (remainingDistanceKm.value * 1000) / speed
+  
+  // 飞行中：根据剩余距离和速度计算
+  if (currentDrone.value?.speed && remainingDistanceKm.value > 0) {
+    const seconds = (remainingDistanceKm.value * 1000) / currentDrone.value.speed
     const eta = new Date(Date.now() + seconds * 1000)
     return formatDateTime(eta)
   }
+  
+  // 未开始：根据规划时长计算
+  if (detail.value.status !== 'completed' && detail.value.status !== 'canceled' && routeInfo.value?.duration) {
+     return formatDateTime(new Date(Date.now() + routeInfo.value.duration * 1000))
+  }
+
+  // 兜底逻辑：如果有预计到达时间则显示，否则显示未开始
   return detail.value.expectedArrivalTime ? formatDateTime(detail.value.expectedArrivalTime) : '-'
 })
 
@@ -559,7 +589,7 @@ ws.handleMessage = (message: any) => {
       altitude: data.altitude,
       label: data.droneCode || detail.value.droneCode || `DRONE-${data.droneId || detail.value.assignedDroneId}`,
       status: 'flying',
-      batteryLevel: data.batteryLevel,
+      batteryLevel: data.batteryLevel ?? data.battery,
       speed: data.speed,
       heading: data.heading,
       taskId: taskId.value
@@ -603,16 +633,49 @@ ws.handleMessage = (message: any) => {
 const loadTaskDetail = async (): Promise<void> => {
   try {
     const res = await fetchTaskDetail(taskId.value)
-    detail.value = res.data || res
+    const rawData = res.data || res
     
-    // 如果有路径ID，加载路径信息
-    if (detail.value.routeId) {
+    // Map backend snake_case fields to frontend expected fields if needed
+    // Although fetchTaskDetail already does mapping, double check here
+    detail.value = {
+      ...rawData,
+      status: rawData.status || 'pending',
+      type: rawData.type || rawData.taskType || 'unknown',
+      originName: rawData.originName || rawData.origin_name,
+      destName: rawData.destName || rawData.dest_name || rawData.destination_name,
+      totalDistanceKm: rawData.totalDistanceKm || rawData.total_distance_km,
+      estTimeMin: rawData.estTimeMin || rawData.est_time_min,
+      weightKg: rawData.weightKg || rawData.weight_kg,
+      slaMinutes: rawData.slaMinutes || rawData.sla_minutes,
+      taskCategory: rawData.taskCategory || rawData.task_category,
+      routeOptimizeStrategy: rawData.routeOptimizeStrategy || rawData.route_optimize_strategy,
+      avoidNoFlyZones: rawData.avoidNoFlyZones ?? rawData.avoid_no_fly_zones,
+      considerWeather: rawData.considerWeather ?? rawData.consider_weather
+    }
+    
+    // V7: 使用 plannedPath 而不是 routeId
+    if (detail.value.plannedPath && detail.value.plannedPath.length > 0) {
+      routePoints.value = detail.value.plannedPath.map((p: any) => ({
+        lng: p[0] || p.lng, // 兼容 [lng, lat] 或 {lng, lat}
+        lat: p[1] || p.lat,
+        altitude: p[2] || p.altitude || 100
+      }))
+      routeInfo.value = {
+        distance: detail.value.totalDistanceKm || 0,
+        duration: (detail.value.estTimeMin || 0) * 60,
+        riskFactor: 0.2 // 默认风险系数
+      }
+    } else if (detail.value.routeId) {
+      // 兼容旧逻辑
       await loadRouteInfo(detail.value.routeId)
     }
     
     // 如果任务进行中，加载实时轨迹
     if (detail.value.status === 'in_progress' && detail.value.assignedDroneId) {
       await loadTaskTrack()
+    } else if (detail.value.status === 'approved' && detail.value.assignedDroneId) {
+       // 如果已分配但未开始，获取无人机当前位置
+       await loadAssignedDrone(detail.value.assignedDroneId)
     }
   } catch (error) {
     ElMessage.error('加载任务详情失败')
@@ -679,12 +742,40 @@ const loadTaskTrack = async (): Promise<void> => {
 }
 
 /**
+ * 加载已分配的无人机位置
+ */
+const loadAssignedDrone = async (droneId: number): Promise<void> => {
+  try {
+    const drone = await fetchDrone(droneId)
+    if (drone && drone.lng && drone.lat) {
+       currentDrone.value = {
+        id: drone.id,
+        lat: drone.lat,
+        lng: drone.lng,
+        altitude: drone.altitude,
+        label: detail.value.droneCode || `DRONE-${drone.id}`,
+        status: drone.status,
+        batteryLevel: drone.battery,
+        speed: drone.speed,
+        taskId: taskId.value
+      } as DroneMarker
+      droneMarkers.value = [currentDrone.value]
+      // 不添加轨迹，只显示当前位置
+    }
+  } catch (error) {
+    console.error('Failed to load assigned drone:', error)
+  }
+}
+
+/**
  * 加载可用无人机列表
  */
 const loadAvailableDrones = async (): Promise<void> => {
   try {
+    // 强制只查询 idle 状态的无人机
     const res = await fetchDrones({ status: 'idle', page: 1, pageSize: 100 })
-    availableDrones.value = res.list || []
+    // 前端二次过滤，确保安全
+    availableDrones.value = (res.list || []).filter((d: any) => d.status === 'idle')
   } catch (error) {
     console.error('Failed to load drones:', error)
   }
@@ -714,6 +805,20 @@ const handleAssign = async (): Promise<void> => {
     await loadTaskDetail()
   } catch (error) {
     ElMessage.error('分配失败')
+    console.error(error)
+  }
+}
+
+/**
+ * 执行任务（起飞）
+ */
+const handleTakeoff = async (): Promise<void> => {
+  try {
+    await updateTaskStatus(taskId.value, 'in_progress')
+    ElMessage.success('任务开始，无人机已起飞')
+    await loadTaskDetail()
+  } catch (error) {
+    ElMessage.error('启动任务失败')
     console.error(error)
   }
 }
@@ -897,9 +1002,15 @@ const getBatteryColor = (level?: number): string => {
 /**
  * 格式化日期时间
  */
-const formatDateTime = (dateStr?: string | Date): string => {
+const formatDateTime = (dateStr?: string | Date | number[]): string => {
   if (!dateStr) return '-'
-  const date = dateStr instanceof Date ? dateStr : new Date(dateStr)
+  let date: Date
+  if (Array.isArray(dateStr)) {
+    // Handle array [y, m, d, h, m, s]
+    date = new Date(dateStr[0], dateStr[1] - 1, dateStr[2], dateStr[3], dateStr[4], dateStr[5])
+  } else {
+    date = dateStr instanceof Date ? dateStr : new Date(dateStr)
+  }
   return date.toLocaleString('zh-CN')
 }
 
